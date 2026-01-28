@@ -1,4 +1,5 @@
 ﻿import { connect } from "cloudflare:sockets";
+import { WorkflowEntrypoint } from "cloudflare:workers";
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
 let 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true;
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
@@ -180,6 +181,17 @@ export default {
                         return new Response(本地优选IP, { status: 200, headers: { 'Content-Type': 'text/plain;charset=utf-8', 'asn': request.cf.asn } });
                     } else if (访问路径 === 'admin/cf.json') {// CF配置文件
                         return new Response(JSON.stringify(request.cf, null, 2), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+                    } else if (访问路径 === 'admin/workflow') {
+                        try {
+                            if (env.KV_WORKFLOW) {
+                                const instance = await env.KV_WORKFLOW.create();
+                                return new Response(JSON.stringify({ success: true, message: 'Workflow 已启动', id: instance.id }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                            } else {
+                                return new Response(JSON.stringify({ success: false, message: 'Workflow 绑定未发现' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+                            }
+                        } catch (err) {
+                            return new Response(JSON.stringify({ success: false, message: err.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+                        }
                     }
 
                     ctx.waitUntil(请求日志记录(env, request, 访问IP, 'Admin_Login', config_JSON));
@@ -363,6 +375,11 @@ export default {
             return 反代响应;
         } catch (error) { }
         return new Response(await nginx(), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
+    },
+    async scheduled(event, env, ctx) {
+        if (env.KV_WORKFLOW) {
+            await env.KV_WORKFLOW.create();
+        }
     }
 };
 ///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
@@ -2109,4 +2126,40 @@ async function html1101(host, 访问IP) {
   </script> 
 </body>
 </html>`;
+}
+
+export class KVWorkflow extends WorkflowEntrypoint {
+	async run(event, step) {
+		const { env } = this;
+		await step.do("sync-kv", async () => {
+			if (!env.KV) throw new Error("KV 绑定未发现，请先在控制台或 wrangler.toml 中配置 KV 绑定。");
+			
+			console.log("正在从远程获取优选 IP 列表...");
+			const res = await fetch("https://raw.githubusercontent.com/cmliu/cmliu/main/ADD.txt");
+			if (!res.ok) throw new Error("无法获取优选 IP 列表");
+			const text = await res.text();
+			
+			console.log("正在更新 KV 数据...");
+			await env.KV.put("ADD.txt", text);
+			
+			// 记录一条日志到 KV 中的 log.json
+			const existingLog = await env.KV.get("log.json") || "[]";
+			let logs = [];
+			try {
+				logs = JSON.parse(existingLog);
+			} catch (e) {
+				logs = [];
+			}
+			logs.push({
+				TYPE: "Workflow",
+				TIME: Date.now(),
+				MSG: "自动更新优选 IP 成功",
+				COUNT: text.split('\n').length
+			});
+			// 只保留最近 100 条日志
+			await env.KV.put("log.json", JSON.stringify(logs.slice(-100), null, 2));
+			
+			return { success: true, count: text.split('\n').length };
+		});
+	}
 }
