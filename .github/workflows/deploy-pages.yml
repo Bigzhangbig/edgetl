@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { name: speedtestt-edt,    account_id_secret: CF_ID_OUTLOOK, api_token_secret: CF_TOKEN_OUTLOOK }
+          - { name: speedtestt-edt1,   account_id_secret: CF_ID_OUTLOOK, api_token_secret: CF_TOKEN_OUTLOOK }
           - { name: speedtestt-edt2,   account_id_secret: CF_ID_BIT,     api_token_secret: CF_TOKEN_BIT }
           - { name: speedtestt-edt3,   account_id_secret: CF_ID_GMAIL,   api_token_secret: CF_TOKEN_GMAIL }
           - { name: speedtestt-edt4,   account_id_secret: CF_ID_QQ,      api_token_secret: CF_TOKEN_QQ }
