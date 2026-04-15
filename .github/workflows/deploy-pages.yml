@@ -1,0 +1,28 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: speedtestt-edt,    account_id_secret: CF_ID_BIT,     api_token_secret: CF_TOKEN_BIT }
+          - { name: speedtestt-edt2,   account_id_secret: CF_ID_GMAIL,   api_token_secret: CF_TOKEN_GMAIL }
+          - { name: speedtestt-edt3,   account_id_secret: CF_ID_OUTLOOK, api_token_secret: CF_TOKEN_OUTLOOK }
+          - { name: speedtestt-edt4,   account_id_secret: CF_ID_QQ,      api_token_secret: CF_TOKEN_QQ }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to ${{ matrix.target.name }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets[matrix.target.api_token_secret] }}
+          accountId: ${{ secrets[matrix.target.account_id_secret] }}
+          command: pages deploy . --project-name=${{ matrix.target.name }}
