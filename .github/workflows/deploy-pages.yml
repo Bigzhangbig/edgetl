@@ -18,10 +18,10 @@ jobs:
           - { name: speedtestt-edt4,   account_id_secret: CF_ID_QQ,      api_token_secret: CF_TOKEN_QQ }
           - { name: speedtestt-edt5,   account_id_secret: CF_ID_QQ2,     api_token_secret: CF_TOKEN_QQ2 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Deploy to ${{ matrix.target.name }}
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets[matrix.target.api_token_secret] }}
           accountId: ${{ secrets[matrix.target.account_id_secret] }}
