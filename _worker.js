@@ -5434,7 +5434,7 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 					const speedIdx = headers.findIndex(h => h.includes('下载速度'));
 					const coloIdx = headers.findIndex(h => {
 						const lowerH = h.toLowerCase();
-						return lowerH.includes('数据中心') || lowerH.includes('colo') || lowerH.includes('iata');
+						return lowerH.includes('数据中心') || lowerH.includes('地区码') || lowerH.includes('colo') || lowerH.includes('iata');
 					});
 					const port = parsedUrl.searchParams.get('port') || 默认端口;
 					dataLines.forEach(line => {
