@@ -5785,7 +5785,7 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 						const 地区备注 = coloIdx > -1 ? 格式化机场三字码地区(cols[coloIdx]) : '';
 						const 速度备注 = 地区备注
 							? `${地区备注} ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`
-							: `${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
+							: `CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
 						const ipItem = `${wrappedIP}:${port}#${速度备注}`;
 						// 处理第一个数组 - 优选IP
 						if (API备注名) {
