@@ -5586,8 +5586,10 @@ function 格式化机场三字码地区(原备注 = '') {
 	for (const 三字码 of 有效三字码列表) {
 		const [地区名称, 国家代码] = 机场三字码地区映射[三字码] || [];
 		if (!地区名称) continue;
-		const 国旗 = 国家代码转旗帜(国家代码);
-		格式化后备注 = 格式化后备注.replace(new RegExp(`\\b${三字码}\\b`, 'gi'), `${国旗}${国家代码}`);
+		const code = String(国家代码 || '').trim().toUpperCase();
+		if (!/^[A-Z]{2}$/.test(code)) continue;
+		const 国旗 = 国家代码转旗帜(code);
+		格式化后备注 = 格式化后备注.replace(new RegExp(`\\b${三字码}\\b`, 'gi'), `${国旗}${code}`);
 	}
 	return 格式化后备注;
 }
