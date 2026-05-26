@@ -5587,8 +5587,7 @@ function 格式化机场三字码地区(原备注 = '') {
 		const [地区名称, 国家代码] = 机场三字码地区映射[三字码] || [];
 		if (!地区名称) continue;
 		const 国旗 = 国家代码转旗帜(国家代码);
-		const 地区标签 = `${地区名称}${国旗}`;
-		格式化后备注 = 格式化后备注.replace(new RegExp(`\\b${三字码}\\b`, 'gi'), `${地区标签} ${三字码}`);
+		格式化后备注 = 格式化后备注.replace(new RegExp(`\\b${三字码}\\b`, 'gi'), `${国旗}${国家代码}`);
 	}
 	return 格式化后备注;
 }
@@ -5785,8 +5784,8 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 						const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
 						const 地区备注 = coloIdx > -1 ? 格式化机场三字码地区(cols[coloIdx]) : '';
 						const 速度备注 = 地区备注
-							? `CF优选 ${地区备注} ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`
-							: `CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
+							? `${地区备注} ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`
+							: `${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
 						const ipItem = `${wrappedIP}:${port}#${速度备注}`;
 						// 处理第一个数组 - 优选IP
 						if (API备注名) {
