@@ -5187,7 +5187,14 @@ async function 获取优选订阅生成器数据(优选订阅生成器HOST) {
 
 		for (const 行内容 of 订阅行列表) {
 			if (!行内容.trim()) continue; // 跳过空行
-			if (行内容.includes('00000000-0000-4000-8000-000000000000') && 行内容.includes('example.com')) {
+			let 是优选IP行 = false;
+			if (行内容.includes('00000000-0000-4000-8000-000000000000')) {
+				try {
+					const 链接URL = new URL(行内容.trim());
+					是优选IP行 = String(链接URL.hostname || '').toLowerCase() === 'example.com';
+				} catch (_) { }
+			}
+			if (是优选IP行) {
 				// 这是优选IP行，提取 域名:端口#备注
 				const 地址匹配 = 行内容.match(/:\/\/[^@]+@([^?]+)/);
 				if (地址匹配) {
