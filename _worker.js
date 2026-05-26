@@ -5236,13 +5236,18 @@ const 机场三字码地区映射 = {
 function 格式化机场三字码地区(原备注 = '') {
 	const 备注文本 = String(原备注 || '').trim();
 	if (!备注文本) return 备注文本;
-	const 匹配结果 = 备注文本.match(/\b([a-zA-Z]{3})\b/);
-	if (!匹配结果) return 备注文本;
-	const 机场三字码 = 匹配结果[1].toUpperCase();
-	const 国家地区 = 机场三字码地区映射[机场三字码];
-	if (!国家地区) return 备注文本;
-	if (备注文本.toUpperCase() === 机场三字码) return `${国家地区} ${机场三字码}`;
-	return 备注文本.replace(new RegExp(`\\b${机场三字码}\\b`, 'i'), `${国家地区} ${机场三字码}`);
+	const 三字码列表 = (备注文本.match(/\b[a-zA-Z]{3}\b/g) || []).map(code => code.toUpperCase());
+	const 有效三字码列表 = [...new Set(三字码列表.filter(code => !!机场三字码地区映射[code]))];
+	if (!有效三字码列表.length) return 备注文本;
+	if (有效三字码列表.length === 1 && 备注文本.toUpperCase() === 有效三字码列表[0]) {
+		const 单个三字码 = 有效三字码列表[0];
+		return `${机场三字码地区映射[单个三字码]} ${单个三字码}`;
+	}
+	let 格式化后备注 = 备注文本;
+	for (const 三字码 of 有效三字码列表) {
+		格式化后备注 = 格式化后备注.replace(new RegExp(`\\b${三字码}\\b`, 'gi'), `${机场三字码地区映射[三字码]} ${三字码}`);
+	}
+	return 格式化后备注;
 }
 
 async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) {
@@ -5427,13 +5432,18 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 					const ipIdx = headers.findIndex(h => h.includes('IP'));
 					const delayIdx = headers.findIndex(h => h.includes('延迟'));
 					const speedIdx = headers.findIndex(h => h.includes('下载速度'));
-					const coloIdx = headers.findIndex(h => h.includes('数据中心') || h.toLowerCase().includes('colo') || h.toLowerCase().includes('iata'));
+					const coloIdx = headers.findIndex(h => {
+						const lowerH = h.toLowerCase();
+						return lowerH.includes('数据中心') || lowerH.includes('colo') || lowerH.includes('iata');
+					});
 					const port = parsedUrl.searchParams.get('port') || 默认端口;
 					dataLines.forEach(line => {
 						const cols = line.split(',').map(c => c.trim());
 						const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
 						const 地区备注 = coloIdx > -1 ? 格式化机场三字码地区(cols[coloIdx]) : '';
-						const 速度备注 = `CF优选${地区备注 ? ` ${地区备注}` : ''} ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
+						const 速度备注 = 地区备注
+							? `CF优选 ${地区备注} ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`
+							: `CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
 						const ipItem = `${wrappedIP}:${port}#${速度备注}`;
 						// 处理第一个数组 - 优选IP
 						if (API备注名) {
