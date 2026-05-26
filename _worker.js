@@ -5584,8 +5584,7 @@ function 格式化机场三字码地区(原备注 = '') {
 	if (!有效三字码列表.length) return 备注文本;
 	let 格式化后备注 = 备注文本;
 	for (const 三字码 of 有效三字码列表) {
-		const [地区名称, 国家代码] = 机场三字码地区映射[三字码] || [];
-		if (!地区名称) continue;
+		const [, 国家代码] = 机场三字码地区映射[三字码] || [];
 		const code = String(国家代码 || '').trim().toUpperCase();
 		if (!/^[A-Z]{2}$/.test(code)) continue;
 		const 国旗 = 国家代码转旗帜(code);
