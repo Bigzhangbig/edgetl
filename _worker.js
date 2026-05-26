@@ -5207,6 +5207,44 @@ async function 获取优选订阅生成器数据(优选订阅生成器HOST) {
 	return [优选IP, 其他节点LINK];
 }
 
+const 机场三字码地区映射 = {
+	SIN: '新加坡🇸🇬', NRT: '日本🇯🇵', HND: '日本🇯🇵', KIX: '日本🇯🇵',
+	HKG: '中国香港🇭🇰', TPE: '中国台湾🇹🇼', KHH: '中国台湾🇹🇼', TNN: '中国台湾🇹🇼',
+	ICN: '韩国🇰🇷', GMP: '韩国🇰🇷', PUS: '韩国🇰🇷',
+	BKK: '泰国🇹🇭', DMK: '泰国🇹🇭',
+	KUL: '马来西亚🇲🇾', PEN: '马来西亚🇲🇾',
+	MNL: '菲律宾🇵🇭', CEB: '菲律宾🇵🇭',
+	SGN: '越南🇻🇳', HAN: '越南🇻🇳',
+	CGK: '印度尼西亚🇮🇩', SUB: '印度尼西亚🇮🇩',
+	BOM: '印度🇮🇳', DEL: '印度🇮🇳', MAA: '印度🇮🇳',
+	DXB: '阿联酋🇦🇪', AUH: '阿联酋🇦🇪',
+	LHR: '英国🇬🇧', MAN: '英国🇬🇧',
+	CDG: '法国🇫🇷', FRA: '德国🇩🇪', MUC: '德国🇩🇪',
+	AMS: '荷兰🇳🇱', BRU: '比利时🇧🇪', MAD: '西班牙🇪🇸', BCN: '西班牙🇪🇸',
+	MXP: '意大利🇮🇹', FCO: '意大利🇮🇹', WAW: '波兰🇵🇱', VIE: '奥地利🇦🇹',
+	ARN: '瑞典🇸🇪', CPH: '丹麦🇩🇰', HEL: '芬兰🇫🇮', OSL: '挪威🇳🇴', ZRH: '瑞士🇨🇭',
+	JFK: '美国🇺🇸', EWR: '美国🇺🇸', IAD: '美国🇺🇸', ATL: '美国🇺🇸',
+	ORD: '美国🇺🇸', DFW: '美国🇺🇸', DEN: '美国🇺🇸', SJC: '美国🇺🇸',
+	LAX: '美国🇺🇸', SEA: '美国🇺🇸', MIA: '美国🇺🇸',
+	YYZ: '加拿大🇨🇦', YVR: '加拿大🇨🇦', YUL: '加拿大🇨🇦',
+	GRU: '巴西🇧🇷', EZE: '阿根廷🇦🇷',
+	SYD: '澳大利亚🇦🇺', MEL: '澳大利亚🇦🇺', BNE: '澳大利亚🇦🇺', PER: '澳大利亚🇦🇺',
+	AKL: '新西兰🇳🇿', CHC: '新西兰🇳🇿',
+	JNB: '南非🇿🇦', CPT: '南非🇿🇦'
+};
+
+function 格式化机场三字码地区(原备注 = '') {
+	const 备注文本 = String(原备注 || '').trim();
+	if (!备注文本) return 备注文本;
+	const 匹配结果 = 备注文本.match(/\b([a-zA-Z]{3})\b/);
+	if (!匹配结果) return 备注文本;
+	const 机场三字码 = 匹配结果[1].toUpperCase();
+	const 国家地区 = 机场三字码地区映射[机场三字码];
+	if (!国家地区) return 备注文本;
+	if (备注文本.toUpperCase() === 机场三字码) return `${国家地区} ${机场三字码}`;
+	return 备注文本.replace(new RegExp(`\\b${机场三字码}\\b`, 'i'), `${国家地区} ${机场三字码}`);
+}
+
 async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) {
 	if (!urls?.length) return [[], [], [], []];
 	const results = new Set(), 反代IP池 = new Set();
@@ -5374,7 +5412,8 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 						const cols = line.split(',').map(c => c.trim());
 						if (tlsIdx !== -1 && cols[tlsIdx]?.toLowerCase() !== 'true') return;
 						const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
-						const ipItem = `${wrappedIP}:${cols[portIdx]}#${cols[remarkIdx]}`;
+						const 备注文本 = 格式化机场三字码地区(cols[remarkIdx]);
+						const ipItem = `${wrappedIP}:${cols[portIdx]}#${备注文本}`;
 						// 处理第一个数组 - 优选IP
 						if (API备注名) {
 							const 处理后IP = `${ipItem} [${API备注名}]`;
@@ -5388,11 +5427,14 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 					const ipIdx = headers.findIndex(h => h.includes('IP'));
 					const delayIdx = headers.findIndex(h => h.includes('延迟'));
 					const speedIdx = headers.findIndex(h => h.includes('下载速度'));
+					const coloIdx = headers.findIndex(h => h.includes('数据中心') || h.toLowerCase().includes('colo') || h.toLowerCase().includes('iata'));
 					const port = parsedUrl.searchParams.get('port') || 默认端口;
 					dataLines.forEach(line => {
 						const cols = line.split(',').map(c => c.trim());
 						const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
-						const ipItem = `${wrappedIP}:${port}#CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
+						const 地区备注 = coloIdx > -1 ? 格式化机场三字码地区(cols[coloIdx]) : '';
+						const 速度备注 = `CF优选${地区备注 ? ` ${地区备注}` : ''} ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
+						const ipItem = `${wrappedIP}:${port}#${速度备注}`;
 						// 处理第一个数组 - 优选IP
 						if (API备注名) {
 							const 处理后IP = `${ipItem} [${API备注名}]`;
