@@ -1,4 +1,4 @@
-﻿const Version = '2026-05-29 01:48:18 (Merged Upstream)';
+const Version = '2026-05-29 01:48:18 (Merged Upstream)';
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
 let 缓存SOCKS5白名单 = null, 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true, 调试日志打印 = false;
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
@@ -5218,9 +5218,26 @@ async function 获取优选订阅生成器数据(优选订阅生成器HOST) {
 const 机场三字码地区映射 = {
 	HKG: ['中国香港', 'HK'],
 	SGP: ['新加坡', 'SG'],
+	SIN: ['新加坡', 'SG'],
 	NRT: ['日本东京', 'JP'],
+	KIX: ['日本大阪', 'JP'],
+	ICN: ['韩国首尔', 'KR'],
+	TPE: ['中国台湾', 'TW'],
 	LAX: ['美国洛杉矶', 'US'],
+	SJC: ['美国圣何塞', 'US'],
+	SFO: ['美国旧金山', 'US'],
+	SEA: ['美国西雅图', 'US'],
+	JFK: ['美国纽约', 'US'],
 	FRA: ['德国法兰克福', 'DE'],
+	LHR: ['英国伦敦', 'GB'],
+	AMS: ['荷兰阿姆斯特丹', 'NL'],
+	CDG: ['法国巴黎', 'FR'],
+	SYD: ['澳大利亚悉尼', 'AU'],
+	YYZ: ['加拿大多伦多', 'CA'],
+	BOM: ['印度孟买', 'IN'],
+	MAC: ['中国澳门', 'MO'],
+	BKK: ['泰国曼谷', 'TH'],
+	KUL: ['马来西亚吉隆坡', 'MY'],
 };
 
 function 国家代码转旗帜(国家代码 = '') {
