@@ -1,4 +1,6 @@
-﻿const Version = '2026-06-11 04:16:17';
+const Version = '2026-06-11 04:16:17';
+const 查杀特征码 = 'PROXYIP';
+let 预加载竞速拨号 = false;
 let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
 let 缓存SOCKS5白名单 = null, 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true, 调试日志打印 = false;
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
@@ -2082,10 +2084,6 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			});
 		} catch (err) {
 			log(`[TCP转发] 直连 ${host}:${portNum} 失败: ${err.message}`);
-			if (err instanceof Error && err.name === '预加载解析为空') {
-				closeSocketQuietly(ws);
-				throw err;
-			}
 			await connecttoPry();
 		}
 	}
@@ -5176,7 +5174,7 @@ function 识别运营商(request) {
 
 async function 生成随机IP(request, count = 16, 指定端口 = -1) {
 	const url = new URL(request.url);
-	const 查询参数运营商 = String(url.searchParams.get('cnIspCode') || '').toLowerCase();
+	const 查询参数运营商 = String(url.searchParams.get('cnIspCode') || url.searchParams.get('asOrg') || '').toLowerCase();
 	const 运营商文件标识 = ['ct', 'cu', 'cmcc', 'cf'].includes(查询参数运营商) ? 查询参数运营商 : 识别运营商(request);
 	const 运营商名称映射 = {
 		cmcc: 'CF移动优选',
