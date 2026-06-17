@@ -56,6 +56,7 @@ export default {
 				}
 				if (请求前8总和 === 目标前8总和 && 请求UUID.slice(-12) === 目标UUID.slice(-12)) return new Response(JSON.stringify({ Version: Number(String(Version).replace(/\D+/g, '')) }), { status: 200, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
 			}
+			return new Response('Not Found', { status: 404 });
 		} else if (管理员密码 && upgradeHeader === 'websocket') {// WebSocket代理
 			await 反代参数获取(url, userID);
 			log(`[WebSocket] 命中请求: ${url.pathname}${url.search}`);
