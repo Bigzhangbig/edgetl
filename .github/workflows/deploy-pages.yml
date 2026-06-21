@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Pages
+name: Deploy to Cloudflare Workers
 
 on:
   schedule:
@@ -12,17 +12,17 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { name: speedtestt-edt1,   account_id_secret: CF_ID_OUTLOOK, api_token_secret: CF_TOKEN_OUTLOOK }
-          - { name: speedtestt-edt2,   account_id_secret: CF_ID_BIT,     api_token_secret: CF_TOKEN_BIT }
-          - { name: speedtestt-edt3,   account_id_secret: CF_ID_GMAIL,   api_token_secret: CF_TOKEN_GMAIL }
-          - { name: speedtestt-edt4,   account_id_secret: CF_ID_QQ,      api_token_secret: CF_TOKEN_QQ }
-          - { name: speedtestt-edt5,   account_id_secret: CF_ID_QQ2,     api_token_secret: CF_TOKEN_QQ2 }
+          - { account_id_secret: CF_ID_OUTLOOK, api_token_secret: CF_TOKEN_OUTLOOK }
+          - { account_id_secret: CF_ID_BIT,     api_token_secret: CF_TOKEN_BIT }
+          - { account_id_secret: CF_ID_GMAIL,   api_token_secret: CF_TOKEN_GMAIL }
+          - { account_id_secret: CF_ID_QQ,      api_token_secret: CF_TOKEN_QQ }
+          - { account_id_secret: CF_ID_QQ2,     api_token_secret: CF_TOKEN_QQ2 }
     steps:
       - uses: actions/checkout@v6
 
-      - name: Deploy to ${{ matrix.target.name }}
+      - name: Deploy Worker
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets[matrix.target.api_token_secret] }}
           accountId: ${{ secrets[matrix.target.account_id_secret] }}
-          command: pages deploy . --project-name=${{ matrix.target.name }}
+          command: deploy
