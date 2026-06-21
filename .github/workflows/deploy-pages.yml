@@ -48,11 +48,11 @@ jobs:
           ZONE_ID: 7d0b4506692963308b3ae0aa4bef0b5c
         run: |
           declare -A DOMAINS=(
-            ["edt"]="p8k3xm7wq2v.pages.dev"
-            ["edt-2"]="0883tjvnuvz.pages.dev"
-            ["edt-3"]="p4zb0i0r4xk.pages.dev"
-            ["edt-4"]="2sr79gbud7n.pages.dev"
-            ["edt-5"]="p8k3xm7wq2v.pages.dev"
+            ["edt"]="p4zb0i0r4xk.pages.dev"
+            ["edt-2"]="0883tjvnuvz-4d7.pages.dev"
+            ["edt-3"]="p4zb0i0r4xk-47e.pages.dev"
+            ["edt-4"]="2sr79gbud7n-7np.pages.dev"
+            ["edt-5"]="p8k3xm7wq2v-508.pages.dev"
           )
           for name in "${!DOMAINS[@]}"; do
             target="${DOMAINS[$name]}"
