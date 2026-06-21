@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - { account_id: CF_ID_QQ,      token: CF_TOKEN_QQ,      project: p8k3xm7wq2v }
+          - { account_id: CF_ID_QQ,      token: CF_TOKEN_QQ,      project: p4zb0i0r4xk }
           - { account_id: CF_ID_GMAIL,   token: CF_TOKEN_GMAIL,   project: 0883tjvnuvz }
           - { account_id: CF_ID_QQ2,     token: CF_TOKEN_QQ2,     project: p4zb0i0r4xk }
           - { account_id: CF_ID_OUTLOOK,  token: CF_TOKEN_OUTLOOK,  project: 2sr79gbud7n }
