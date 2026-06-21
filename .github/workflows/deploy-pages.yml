@@ -25,7 +25,7 @@ jobs:
         with:
           apiToken: ${{ secrets[matrix.target.token] }}
           accountId: ${{ secrets[matrix.target.account_id] }}
-          command: pages deploy --project-name=${{ matrix.target.project }}
+          command: pages deploy --project-name=${{ matrix.target.project }} --config=wrangler.pages.toml
 
   dns:
     runs-on: ubuntu-latest
