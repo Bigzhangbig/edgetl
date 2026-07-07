@@ -191,7 +191,7 @@ export default {
 									if (!ip || !loc) throw new Error('代理检测响应无效');
 									检测代理响应 = { success: true, proxy: 代理协议 + "://" + 完整代理参数, ip, loc, responseTime: Date.now() - startTime };
 								} finally {
-									try { tlsSocket ? tlsSocket.close() : await tcpSocket?.close?.() } catch (e) { }
+									try { tlsSocket ? tlsSocket.close() : await tcpSocket?.close?.() } catch (e) { console.log('Error closing socket:', e); }
 								}
 							} catch (error) {
 								检测代理响应 = { success: false, error: error.message, proxy: 代理协议 + "://" + 完整代理参数, responseTime: Date.now() - startTime };
@@ -531,15 +531,15 @@ async function 处理XHTTP请求(request, yourUUID) {
 	const reader = request.body.getReader();
 	const 首包 = await 读取XHTTP首包(reader, yourUUID);
 	if (!首包) {
-		try { reader.releaseLock() } catch (e) { }
+		try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 		return new Response('Invalid request', { status: 400 });
 	}
 	if (isSpeedTestSite(首包.hostname)) {
-		try { reader.releaseLock() } catch (e) { }
+		try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 		return new Response('Forbidden', { status: 403 });
 	}
 	if (首包.isUDP && 首包.协议 !== 'trojan' && 首包.port !== 53) {
-		try { reader.releaseLock() } catch (e) { }
+		try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 		return new Response('UDP is not supported', { status: 400 });
 	}
 
@@ -554,7 +554,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 
 	const 释放远端写入器 = () => {
 		if (远端写入器) {
-			try { 远端写入器.releaseLock() } catch (e) { }
+			try { 远端写入器.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 			远端写入器 = null;
 		}
 		当前写入Socket = null;
@@ -599,7 +599,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 					if (已关闭) return;
 					已关闭 = true;
 					this.readyState = WebSocket.CLOSED;
-					try { controller.close() } catch (e) { }
+					try { controller.close() } catch (e) { console.log('Error closing socket:', e); }
 				}
 			};
 
@@ -611,7 +611,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 					await remoteConnWrapper.retryConnect();
 				},
 				关闭连接: () => {
-					try { remoteConnWrapper.socket?.close() } catch (e) { }
+					try { remoteConnWrapper.socket?.close() } catch (e) { console.log('Error closing socket:', e); }
 					closeSocketQuietly(xhttpBridge);
 				},
 				名称: 'XHTTP上行'
@@ -649,7 +649,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 					await 上行写入队列.等待空();
 					const writer = 获取远端写入器();
 					if (writer) {
-						try { await writer.close() } catch (e) { }
+						try { await writer.close() } catch (e) { console.log('Error closing socket:', e); }
 					}
 				}
 			} catch (err) {
@@ -658,14 +658,14 @@ async function 处理XHTTP请求(request, yourUUID) {
 			} finally {
 				上行写入队列.清空();
 				释放远端写入器();
-				try { reader.releaseLock() } catch (e) { }
+				try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 			}
 		},
 		cancel() {
 			XHTTP上行写入队列?.清空();
-			try { remoteConnWrapper.socket?.close() } catch (e) { }
+			try { remoteConnWrapper.socket?.close() } catch (e) { console.log('Error closing socket:', e); }
 			释放远端写入器();
-			try { reader.releaseLock() } catch (e) { }
+			try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 		}
 	}), { status: 200, headers: responseHeaders });
 }
@@ -896,7 +896,7 @@ async function 处理gRPC请求(request, yourUUID) {
 					刷新发送队列(true);
 					已关闭 = true;
 					this.readyState = WebSocket.CLOSED;
-					try { controller.close() } catch (e) { }
+					try { controller.close() } catch (e) { console.log('Error closing socket:', e); }
 				}
 			};
 
@@ -945,18 +945,18 @@ async function 处理gRPC请求(request, yourUUID) {
 				grpcBridge.readyState = WebSocket.CLOSED;
 				if (刷新定时器) clearTimeout(刷新定时器);
 				if (远端写入器) {
-					try { 远端写入器.releaseLock() } catch (e) { }
+					try { 远端写入器.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 					远端写入器 = null;
 				}
 				当前写入Socket = null;
-				try { reader.releaseLock() } catch (e) { }
-				try { remoteConnWrapper.socket?.close() } catch (e) { }
-				try { controller.close() } catch (e) { }
+				try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
+				try { remoteConnWrapper.socket?.close() } catch (e) { console.log('Error closing socket:', e); }
+				try { controller.close() } catch (e) { console.log('Error closing socket:', e); }
 			};
 
 			const 释放远端写入器 = () => {
 				if (远端写入器) {
-					try { 远端写入器.releaseLock() } catch (e) { }
+					try { 远端写入器.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 					远端写入器 = null;
 				}
 				当前写入Socket = null;
@@ -1078,8 +1078,8 @@ async function 处理gRPC请求(request, yourUUID) {
 		},
 		cancel() {
 			GRPC上行写入队列?.清空();
-			try { remoteConnWrapper.socket?.close() } catch (e) { }
-			try { reader.releaseLock() } catch (e) { }
+			try { remoteConnWrapper.socket?.close() } catch (e) { console.log('Error closing socket:', e); }
+			try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 		}
 	}), { status: 200, headers: grpcHeaders });
 }
@@ -1147,7 +1147,7 @@ async function 处理WS请求(request, yourUUID, url) {
 
 	const 释放远端写入器 = () => {
 		if (远端写入器) {
-			try { 远端写入器.releaseLock() } catch (e) { }
+			try { 远端写入器.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
 			远端写入器 = null;
 		}
 		当前写入Socket = null;
@@ -1170,7 +1170,7 @@ async function 处理WS请求(request, yourUUID, url) {
 			await remoteConnWrapper.retryConnect();
 		},
 		关闭连接: () => {
-			try { remoteConnWrapper.socket?.close() } catch (e) { }
+			try { remoteConnWrapper.socket?.close() } catch (e) { console.log('Error closing socket:', e); }
 			closeSocketQuietly(serverSock);
 		},
 		名称: 'WS上行'
@@ -1887,7 +1887,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			await 等待连接建立(remoteSock);
 			return remoteSock;
 		} catch (err) {
-			try { remoteSock?.close?.() } catch (e) { }
+			try { remoteSock?.close?.() } catch (e) { console.log('Error closing socket:', e); }
 			throw err;
 		}
 	}
@@ -1896,7 +1896,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 		if (有效数据长度(data) <= 0) return;
 		const writer = remoteSock.writable.getWriter();
 		try { await writer.write(数据转Uint8Array(data)) }
-		finally { try { writer.releaseLock() } catch (e) { } }
+		finally { try { writer.releaseLock() } catch (e) { console.log('Error closing socket:', e); } }
 	}
 
 	async function 并发打开候选连接(候选列表) {
@@ -1914,7 +1914,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				for (const attempt of attempts) {
 					attempt.then(({ socket }) => {
 						if (socket !== winner.socket) {
-							try { socket?.close?.() } catch (e) { }
+							try { socket?.close?.() } catch (e) { console.log('Error closing socket:', e); }
 						}
 					}).catch(() => { });
 				}
@@ -1942,7 +1942,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 					缓存反代数组索引 = candidate.index;
 					return socket;
 				} catch (err) {
-					try { socket?.close?.() } catch (e) { }
+					try { socket?.close?.() } catch (e) { console.log('Error closing socket:', e); }
 					log(`[反代连接] 本批连接失败: ${err.message || err}`);
 				}
 			}
@@ -1958,7 +1958,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				await 写入首包(socket, data);
 				return socket;
 			} catch (err) {
-				try { socket?.close?.() } catch (e) { }
+				try { socket?.close?.() } catch (e) { console.log('Error closing socket:', e); }
 				throw err;
 			}
 		} else {
@@ -1995,7 +1995,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				if (有效数据长度(本次首包数据) > 0) {
 					const writer = newSocket.writable.getWriter();
 					try { await writer.write(数据转Uint8Array(本次首包数据)) }
-					finally { try { writer.releaseLock() } catch (e) { } }
+					finally { try { writer.releaseLock() } catch (e) { console.log('Error closing socket:', e); } }
 				}
 			} else if (启用SOCKS5反代 === 'sstp') {
 				log(`[SSTP代理] 代理到: ${host}:${portNum}`);
@@ -2003,7 +2003,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				if (有效数据长度(本次首包数据) > 0) {
 					const writer = newSocket.writable.getWriter();
 					try { await writer.write(数据转Uint8Array(本次首包数据)) }
-					finally { try { writer.releaseLock() } catch (e) { } }
+					finally { try { writer.releaseLock() } catch (e) { console.log('Error closing socket:', e); } }
 				}
 			} else {
 				log(`[反代连接] 代理到: ${host}:${portNum}`);
@@ -2435,7 +2435,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 		}
 		await 下行发送器.flush();
 	} catch (err) { closeSocketQuietly(webSocket) }
-	finally { try { reader.cancel() } catch (e) { } try { reader.releaseLock() } catch (e) { } }
+	finally { try { reader.cancel() } catch (e) { console.log('Error closing socket:', e); } try { reader.releaseLock() } catch (e) { } }
 	if (!hasData && retryFunc) await retryFunc();
 }
 
@@ -2483,9 +2483,9 @@ async function socks5Connect(targetHost, targetPort, initialData, TCP连接) {
 		writer.releaseLock(); reader.releaseLock();
 		return socket;
 	} catch (error) {
-		try { writer.releaseLock() } catch (e) { }
-		try { reader.releaseLock() } catch (e) { }
-		try { socket.close() } catch (e) { }
+		try { writer.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
+		try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
+		try { socket.close() } catch (e) { console.log('Error closing socket:', e); }
 		throw error;
 	}
 }
@@ -2541,9 +2541,9 @@ async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = fa
 
 		return socket;
 	} catch (error) {
-		try { writer.releaseLock() } catch (e) { }
-		try { reader.releaseLock() } catch (e) { }
-		try { socket.close() } catch (e) { }
+		try { writer.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
+		try { reader.releaseLock() } catch (e) { console.log('Error closing socket:', e); }
+		try { socket.close() } catch (e) { console.log('Error closing socket:', e); }
 		throw error;
 	}
 }
@@ -2563,7 +2563,7 @@ async function httpsConnect(targetHost, targetPort, initialData, TCP连接) {
 			log(`[HTTPS代理] TLS版本: ${socket.isTls13 ? '1.3' : '1.2'} | Cipher: 0x${socket.cipherSuite.toString(16)}${socket.cipherConfig?.chacha ? ' (ChaCha20)' : ' (AES-GCM)'}`);
 			return socket;
 		} catch (error) {
-			try { proxySocket.close() } catch (e) { }
+			try { proxySocket.close() } catch (e) { console.log('Error closing socket:', e); }
 			throw error;
 		}
 	};
@@ -2609,7 +2609,7 @@ async function httpsConnect(targetHost, targetPort, initialData, TCP连接) {
 			rejectClosed = reject;
 		});
 		const close = () => {
-			try { tlsSocket.close() } catch (e) { }
+			try { tlsSocket.close() } catch (e) { console.log('Error closing socket:', e); }
 			settleClosed(resolveClosed);
 		};
 		const readable = new ReadableStream({
@@ -2621,10 +2621,10 @@ async function httpsConnect(targetHost, targetPort, initialData, TCP连接) {
 						if (!data) break;
 						if (data.byteLength > 0) controller.enqueue(data);
 					}
-					try { controller.close() } catch (e) { }
+					try { controller.close() } catch (e) { console.log('Error closing socket:', e); }
 					settleClosed(resolveClosed);
 				} catch (error) {
-					try { controller.error(error) } catch (e) { }
+					try { controller.error(error) } catch (e) { console.log('Error closing socket:', e); }
 					settleClosed(rejectClosed, error);
 				}
 			},
@@ -2644,7 +2644,7 @@ async function httpsConnect(targetHost, targetPort, initialData, TCP连接) {
 		});
 		return { readable, writable, closed, close };
 	} catch (error) {
-		try { tlsSocket?.close() } catch (e) { }
+		try { tlsSocket?.close() } catch (e) { console.log('Error closing socket:', e); }
 		throw error;
 	}
 }
@@ -3471,13 +3471,13 @@ async function turnConnect(proxy, targetHost, targetPort, TCP连接) {
 	const turnHost = stripIPv6Brackets(proxy.hostname);
 	let controlSocket = null, dataSocket = null, controlWriter = null, controlReader = null, dataWriter = null, dataReader = null, dataReaderReleased = false;
 	const close = () => {
-		try { controlSocket?.close?.() } catch (e) { }
-		try { dataSocket?.close?.() } catch (e) { }
+		try { controlSocket?.close?.() } catch (e) { console.log('Error closing socket:', e); }
+		try { dataSocket?.close?.() } catch (e) { console.log('Error closing socket:', e); }
 	};
 	const releaseDataReader = () => {
 		if (dataReaderReleased) return;
 		dataReaderReleased = true;
-		try { dataReader?.releaseLock?.() } catch (e) { }
+		try { dataReader?.releaseLock?.() } catch (e) { console.log('Error closing socket:', e); }
 	};
 
 	try {
@@ -3603,7 +3603,7 @@ async function turnConnect(proxy, targetHost, targetPort, TCP连接) {
 				});
 			},
 			cancel() {
-				try { dataReader?.cancel?.() } catch (e) { }
+				try { dataReader?.cancel?.() } catch (e) { console.log('Error closing socket:', e); }
 				releaseDataReader();
 				close();
 			}
@@ -3611,9 +3611,9 @@ async function turnConnect(proxy, targetHost, targetPort, TCP连接) {
 
 		return { readable, writable: dataSocket.writable, closed: dataSocket.closed, close };
 	} catch (error) {
-		try { controlWriter?.releaseLock?.() } catch (e) { }
-		try { controlReader?.releaseLock?.() } catch (e) { }
-		try { dataWriter?.releaseLock?.() } catch (e) { }
+		try { controlWriter?.releaseLock?.() } catch (e) { console.log('Error closing socket:', e); }
+		try { controlReader?.releaseLock?.() } catch (e) { console.log('Error closing socket:', e); }
+		try { dataWriter?.releaseLock?.() } catch (e) { console.log('Error closing socket:', e); }
 		releaseDataReader();
 		close();
 		throw error;
@@ -3657,11 +3657,11 @@ async function sstpConnect(proxy, targetHost, targetPort, TCP连接) {
 		settle(value);
 	};
 	const close = () => {
-		try { reader?.cancel?.().catch?.(() => { }) } catch (e) { }
-		try { reader?.releaseLock?.() } catch (e) { }
-		try { writer?.close?.().catch?.(() => { }) } catch (e) { }
-		try { writer?.releaseLock?.() } catch (e) { }
-		try { socket?.close?.() } catch (e) { }
+		try { reader?.cancel?.().catch?.(() => { }) } catch (e) { console.log('Error closing socket:', e); }
+		try { reader?.releaseLock?.() } catch (e) { console.log('Error closing socket:', e); }
+		try { writer?.close?.().catch?.(() => { }) } catch (e) { console.log('Error closing socket:', e); }
+		try { writer?.releaseLock?.() } catch (e) { console.log('Error closing socket:', e); }
+		try { socket?.close?.() } catch (e) { console.log('Error closing socket:', e); }
 		settleClosed(resolveClosed);
 	};
 
@@ -4003,7 +4003,7 @@ async function sstpConnect(proxy, targetHost, targetPort, TCP连接) {
 						writer.write(buildTcpFrame(0x11)).catch(() => { });
 						const controller = streamController;
 						if (controller) {
-							try { controller.close() } catch (e) { }
+							try { controller.close() } catch (e) { console.log('Error closing socket:', e); }
 						}
 						close();
 						return;
@@ -4014,10 +4014,10 @@ async function sstpConnect(proxy, targetHost, targetPort, TCP连接) {
 			} catch (error) {
 				const controller = streamController;
 				if (controller) {
-					try { controller.error(error) } catch (e) { }
+					try { controller.error(error) } catch (e) { console.log('Error closing socket:', e); }
 				}
 				settleClosed(rejectClosed, error);
-				try { socket?.close?.() } catch (e) { }
+				try { socket?.close?.() } catch (e) { console.log('Error closing socket:', e); }
 			}
 		})();
 
@@ -5323,7 +5323,7 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 				} else if (其他节点LINK && typeof 其他节点LINK === 'string') {
 					订阅链接响应的明文LINK内容 += 其他节点LINK;
 				}
-			} catch (e) { }
+			} catch (e) { console.log('Error closing socket:', e); }
 			return;
 		}
 
@@ -5489,7 +5489,7 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 					});
 				}
 			}
-		} catch (e) { }
+		} catch (e) { console.log('Error closing socket:', e); }
 	}));
 	// 将LINK内容转换为数组并去重
 	const LINK数组 = 订阅链接响应的明文LINK内容.trim() ? [...new Set(订阅链接响应的明文LINK内容.split(/\r?\n/).filter(line => line.trim() !== ''))] : [];
