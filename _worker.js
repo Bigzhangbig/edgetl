@@ -531,15 +531,15 @@ async function 处理XHTTP请求(request, yourUUID) {
 	const reader = request.body.getReader();
 	const 首包 = await 读取XHTTP首包(reader, yourUUID);
 	if (!首包) {
-		try { reader.releaseLock() } catch (e) { }
+		safeRelease(reader);
 		return new Response('Invalid request', { status: 400 });
 	}
 	if (isSpeedTestSite(首包.hostname)) {
-		try { reader.releaseLock() } catch (e) { }
+		safeRelease(reader);
 		return new Response('Forbidden', { status: 403 });
 	}
 	if (首包.isUDP && 首包.协议 !== 'trojan' && 首包.port !== 53) {
-		try { reader.releaseLock() } catch (e) { }
+		safeRelease(reader);
 		return new Response('UDP is not supported', { status: 400 });
 	}
 
@@ -554,7 +554,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 
 	const 释放远端写入器 = () => {
 		if (远端写入器) {
-			try { 远端写入器.releaseLock() } catch (e) { }
+			safeRelease(远端写入器);
 			远端写入器 = null;
 		}
 		当前写入Socket = null;
@@ -658,14 +658,14 @@ async function 处理XHTTP请求(request, yourUUID) {
 			} finally {
 				上行写入队列.清空();
 				释放远端写入器();
-				try { reader.releaseLock() } catch (e) { }
+				safeRelease(reader);
 			}
 		},
 		cancel() {
 			XHTTP上行写入队列?.清空();
 			try { remoteConnWrapper.socket?.close() } catch (e) { }
 			释放远端写入器();
-			try { reader.releaseLock() } catch (e) { }
+			safeRelease(reader);
 		}
 	}), { status: 200, headers: responseHeaders });
 }
@@ -945,18 +945,18 @@ async function 处理gRPC请求(request, yourUUID) {
 				grpcBridge.readyState = WebSocket.CLOSED;
 				if (刷新定时器) clearTimeout(刷新定时器);
 				if (远端写入器) {
-					try { 远端写入器.releaseLock() } catch (e) { }
+					safeRelease(远端写入器);
 					远端写入器 = null;
 				}
 				当前写入Socket = null;
-				try { reader.releaseLock() } catch (e) { }
+				safeRelease(reader);
 				try { remoteConnWrapper.socket?.close() } catch (e) { }
 				try { controller.close() } catch (e) { }
 			};
 
 			const 释放远端写入器 = () => {
 				if (远端写入器) {
-					try { 远端写入器.releaseLock() } catch (e) { }
+					safeRelease(远端写入器);
 					远端写入器 = null;
 				}
 				当前写入Socket = null;
@@ -1079,7 +1079,7 @@ async function 处理gRPC请求(request, yourUUID) {
 		cancel() {
 			GRPC上行写入队列?.清空();
 			try { remoteConnWrapper.socket?.close() } catch (e) { }
-			try { reader.releaseLock() } catch (e) { }
+			safeRelease(reader);
 		}
 	}), { status: 200, headers: grpcHeaders });
 }
@@ -1147,7 +1147,7 @@ async function 处理WS请求(request, yourUUID, url) {
 
 	const 释放远端写入器 = () => {
 		if (远端写入器) {
-			try { 远端写入器.releaseLock() } catch (e) { }
+			safeRelease(远端写入器);
 			远端写入器 = null;
 		}
 		当前写入Socket = null;
@@ -1896,7 +1896,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 		if (有效数据长度(data) <= 0) return;
 		const writer = remoteSock.writable.getWriter();
 		try { await writer.write(数据转Uint8Array(data)) }
-		finally { try { writer.releaseLock() } catch (e) { } }
+		finally { safeRelease(writer); }
 	}
 
 	async function 并发打开候选连接(候选列表) {
@@ -1995,7 +1995,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				if (有效数据长度(本次首包数据) > 0) {
 					const writer = newSocket.writable.getWriter();
 					try { await writer.write(数据转Uint8Array(本次首包数据)) }
-					finally { try { writer.releaseLock() } catch (e) { } }
+					finally { safeRelease(writer); }
 				}
 			} else if (启用SOCKS5反代 === 'sstp') {
 				log(`[SSTP代理] 代理到: ${host}:${portNum}`);
@@ -2003,7 +2003,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				if (有效数据长度(本次首包数据) > 0) {
 					const writer = newSocket.writable.getWriter();
 					try { await writer.write(数据转Uint8Array(本次首包数据)) }
-					finally { try { writer.releaseLock() } catch (e) { } }
+					finally { safeRelease(writer); }
 				}
 			} else {
 				log(`[反代连接] 代理到: ${host}:${portNum}`);
@@ -2098,6 +2098,16 @@ function closeSocketQuietly(socket) {
 		}
 	} catch (error) { }
 }
+	function safeRelease(stream) {
+		if (!stream) return;
+		if (typeof stream.cancel === 'function') {
+			try { stream.cancel() } catch (e) { }
+		}
+		if (typeof stream.releaseLock === 'function') {
+			try { stream.releaseLock() } catch (e) { }
+		}
+	}
+
 
 function formatIdentifier(arr, offset = 0) {
 	const hex = [...arr.slice(offset, offset + 16)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -2435,7 +2445,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 		}
 		await 下行发送器.flush();
 	} catch (err) { closeSocketQuietly(webSocket) }
-	finally { try { reader.cancel() } catch (e) { } try { reader.releaseLock() } catch (e) { } }
+	finally { safeRelease(reader); }
 	if (!hasData && retryFunc) await retryFunc();
 }
 
@@ -2483,8 +2493,8 @@ async function socks5Connect(targetHost, targetPort, initialData, TCP连接) {
 		writer.releaseLock(); reader.releaseLock();
 		return socket;
 	} catch (error) {
-		try { writer.releaseLock() } catch (e) { }
-		try { reader.releaseLock() } catch (e) { }
+		safeRelease(writer);
+		safeRelease(reader);
 		try { socket.close() } catch (e) { }
 		throw error;
 	}
@@ -2541,8 +2551,8 @@ async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = fa
 
 		return socket;
 	} catch (error) {
-		try { writer.releaseLock() } catch (e) { }
-		try { reader.releaseLock() } catch (e) { }
+		safeRelease(writer);
+		safeRelease(reader);
 		try { socket.close() } catch (e) { }
 		throw error;
 	}
@@ -3477,7 +3487,7 @@ async function turnConnect(proxy, targetHost, targetPort, TCP连接) {
 	const releaseDataReader = () => {
 		if (dataReaderReleased) return;
 		dataReaderReleased = true;
-		try { dataReader?.releaseLock?.() } catch (e) { }
+		safeRelease(dataReader);
 	};
 
 	try {
@@ -3611,9 +3621,9 @@ async function turnConnect(proxy, targetHost, targetPort, TCP连接) {
 
 		return { readable, writable: dataSocket.writable, closed: dataSocket.closed, close };
 	} catch (error) {
-		try { controlWriter?.releaseLock?.() } catch (e) { }
-		try { controlReader?.releaseLock?.() } catch (e) { }
-		try { dataWriter?.releaseLock?.() } catch (e) { }
+		safeRelease(controlWriter);
+		safeRelease(controlReader);
+		safeRelease(dataWriter);
 		releaseDataReader();
 		close();
 		throw error;
@@ -3658,9 +3668,9 @@ async function sstpConnect(proxy, targetHost, targetPort, TCP连接) {
 	};
 	const close = () => {
 		try { reader?.cancel?.().catch?.(() => { }) } catch (e) { }
-		try { reader?.releaseLock?.() } catch (e) { }
+		safeRelease(reader);
 		try { writer?.close?.().catch?.(() => { }) } catch (e) { }
-		try { writer?.releaseLock?.() } catch (e) { }
+		safeRelease(writer);
 		try { socket?.close?.() } catch (e) { }
 		settleClosed(resolveClosed);
 	};
