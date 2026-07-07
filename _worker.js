@@ -599,7 +599,7 @@ async function 处理XHTTP请求(request, yourUUID) {
 					if (已关闭) return;
 					已关闭 = true;
 					this.readyState = WebSocket.CLOSED;
-					try { controller.close() } catch (e) { }
+					try { controller.close() } catch (e) { console.error('Error closing controller:', e); }
 				}
 			};
 
@@ -896,7 +896,7 @@ async function 处理gRPC请求(request, yourUUID) {
 					刷新发送队列(true);
 					已关闭 = true;
 					this.readyState = WebSocket.CLOSED;
-					try { controller.close() } catch (e) { }
+					try { controller.close() } catch (e) { console.error('Error closing controller:', e); }
 				}
 			};
 
@@ -951,7 +951,7 @@ async function 处理gRPC请求(request, yourUUID) {
 				当前写入Socket = null;
 				try { reader.releaseLock() } catch (e) { }
 				try { remoteConnWrapper.socket?.close() } catch (e) { }
-				try { controller.close() } catch (e) { }
+				try { controller.close() } catch (e) { console.error('Error closing controller:', e); }
 			};
 
 			const 释放远端写入器 = () => {
@@ -2621,7 +2621,7 @@ async function httpsConnect(targetHost, targetPort, initialData, TCP连接) {
 						if (!data) break;
 						if (data.byteLength > 0) controller.enqueue(data);
 					}
-					try { controller.close() } catch (e) { }
+					try { controller.close() } catch (e) { console.error('Error closing controller:', e); }
 					settleClosed(resolveClosed);
 				} catch (error) {
 					try { controller.error(error) } catch (e) { }
@@ -4003,7 +4003,7 @@ async function sstpConnect(proxy, targetHost, targetPort, TCP连接) {
 						writer.write(buildTcpFrame(0x11)).catch(() => { });
 						const controller = streamController;
 						if (controller) {
-							try { controller.close() } catch (e) { }
+							try { controller.close() } catch (e) { console.error('Error closing controller:', e); }
 						}
 						close();
 						return;
