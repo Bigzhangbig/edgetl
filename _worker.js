@@ -2439,7 +2439,7 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc) {
 	if (!hasData && retryFunc) await retryFunc();
 }
 
-function isSpeedTestSite(hostname) {
+export function isSpeedTestSite(hostname) {
 	const speedTestDomains = [atob('c3BlZWQuY2xvdWRmbGFyZS5jb20=')];
 	if (speedTestDomains.includes(hostname)) {
 		return true;
