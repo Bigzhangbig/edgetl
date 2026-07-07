@@ -521,7 +521,7 @@ export default {
 				return new Response(响应内容, { status: 反代响应.status, headers: { ...Object.fromEntries(反代响应.headers), 'Cache-Control': 'no-store' } });
 			}
 			return 反代响应;
-		} catch (error) { }
+		} catch (error) { console.error(`[反代] fetch 失败: ${error?.message || error}`); }
 		return new Response(await nginx(), { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
 	}
 };
