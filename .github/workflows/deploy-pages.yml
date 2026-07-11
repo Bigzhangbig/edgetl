@@ -18,15 +18,15 @@ jobs:
           - { account_id: CF_ID_OUTLOOK,  token: CF_TOKEN_OUTLOOK,  project: 2sr79gbud7n }
           - { account_id: CF_ID_BIT,     token: CF_TOKEN_BIT,     project: p8k3xm7wq2v }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install wrangler
-        run: npm i -g wrangler@4
+        run: npm i -g wrangler@latest
 
       - name: Deploy to Cloudflare Pages
         run: |
