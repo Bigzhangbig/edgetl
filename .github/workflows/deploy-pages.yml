@@ -18,10 +18,10 @@ jobs:
           - { account_id: CF_ID_OUTLOOK,  token: CF_TOKEN_OUTLOOK,  project: 2sr79gbud7n }
           - { account_id: CF_ID_BIT,     token: CF_TOKEN_BIT,     project: p8k3xm7wq2v }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
