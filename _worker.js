@@ -1,13 +1,12 @@
-const Version = '2026-06-17 01:41:21 (Merged Upstream)';
-let config_JSON, 反代IP = '', 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {};
-let 缓存SOCKS5白名单 = null, 缓存反代IP, 缓存反代解析数组, 缓存反代数组索引 = 0, 启用反代兜底 = true, 调试日志打印 = false;
+const Version = '2026-07-11 02:23:18 (Merged Upstream)';
+let config_JSON, 缓存SOCKS5白名单 = null, 调试日志打印 = false;
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
 ///////////////////////////////////////////////////////全局常量和工具函数///////////////////////////////////////////////
 const WS早期数据最大字节 = 8 * 1024, WS早期数据最大头长度 = Math.ceil(WS早期数据最大字节 * 4 / 3) + 4;
 const 上行合包目标字节 = 16 * 1024, 上行队列最大字节 = 16 * 1024 * 1024, 上行队列最大条目 = 4096;
 const 下行Grain包字节 = 32 * 1024, 下行Grain尾部阈值 = 512, 下行Grain静默毫秒 = 0;
-let TCP并发拨号数 = 2, 预加载竞速拨号 = false;
+let TCP并发拨号数 = 2, 反代并发拨号数 = 1, 预加载竞速拨号 = false;
 ///////////////////////////////////////////////////////查杀特征码///////////////////////////////////////////////
 const 特征码字典 = [
 	(Proxy.name + "IP").toUpperCase(),
@@ -38,11 +37,12 @@ export default {
 		const 访问路径 = url.pathname.slice(1).toLowerCase();
 		调试日志打印 = ['1', 'true'].includes(env.DEBUG) || 调试日志打印;
 		if (TCP并发拨号数 !== 1 && 识别运营商(request) === 'cmcc') TCP并发拨号数 = 1;
+		let 默认反代IP = (`${request.cf.colo}.${特征码字典[0]}.${特征码字典[1]}SsSs.nEt`).toLowerCase(), 默认反代兜底 = true;
 		if (env.PROXYIP) {
 			const proxyIPs = await 整理成数组(env.PROXYIP);
-			反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
-			启用反代兜底 = false;
-		} else 反代IP = (`${request.cf.colo}.${特征码字典[0]}.${特征码字典[1]}SsSs.nEt`).toLowerCase();
+			默认反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
+			默认反代兜底 = false;
+		};
 		const 访问IP = request.headers.get('CF-Connecting-IP') || request.headers.get('True-Client-IP') || request.headers.get('X-Real-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Cluster-Client-IP') || '未知IP';
 		if (缓存SOCKS5白名单 === null) {
 			if (env.GO2SOCKS5) SOCKS5白名单 = [...new Set(SOCKS5白名单.concat(await 整理成数组(env.GO2SOCKS5)))];
@@ -63,19 +63,19 @@ export default {
 			}
 			return new Response('Not Found', { status: 404 });
 		} else if (管理员密码 && upgradeHeader === 'websocket') {// WebSocket代理
-			await 反代参数获取(url, userID);
+			const 反代上下文 = await 反代参数获取(url, userID, 默认反代IP, 默认反代兜底);
 			log(`[WebSocket] 命中请求: ${url.pathname}${url.search}`);
-			return await 处理WS请求(request, userID, url);
+			return await 处理WS请求(request, userID, url, 反代上下文);
 		} else if (管理员密码 && !访问路径.startsWith('admin/') && 访问路径 !== 'login' && request.method === 'POST') {// gRPC/XHTTP代理
-			await 反代参数获取(url, userID);
+			const 反代上下文 = await 反代参数获取(url, userID, 默认反代IP, 默认反代兜底);
 			const referer = request.headers.get('Referer') || '';
 			const 命中XHTTP特征 = referer.includes('x_padding', 14) || referer.includes('x_padding=');
 			if (!命中XHTTP特征 && contentType.startsWith('application/grpc')) {
 				log(`[gRPC] 命中请求: ${url.pathname}${url.search}`);
-				return await 处理gRPC请求(request, userID);
+				return await 处理gRPC请求(request, userID, 反代上下文);
 			}
 			log(`[XHTTP] 命中请求: ${url.pathname}${url.search}`);
-			return await 处理XHTTP请求(request, userID);
+			return await 处理XHTTP请求(request, userID, 反代上下文);
 		} else {
 			if (url.protocol === 'http:') return Response.redirect(url.href.replace(`http://${url.hostname}`, `https://${url.hostname}`), 301);
 			if (!管理员密码) return fetch(Pages静态页面 + '/noADMIN').then(r => { const headers = new Headers(r.headers); headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate'); headers.set('Pragma', 'no-cache'); headers.set('Expires', '0'); return new Response(r.body, { status: 404, statusText: r.statusText, headers }) });
@@ -139,8 +139,8 @@ export default {
 						const startTime = Date.now();
 						let 检测代理响应;
 						try {
-							parsedSocks5Address = await 获取SOCKS5账号(代理参数, 获取代理默认端口(代理协议));
-							const { username, password, hostname, port } = parsedSocks5Address;
+							const checkParsed = await 获取SOCKS5账号(代理参数, 获取代理默认端口(代理协议));
+							const { username, password, hostname, port } = checkParsed;
 							const 完整代理参数 = username && password ? `${username}:${password}@${hostname}:${port}` : `${hostname}:${port}`;
 							try {
 								const 检测主机 = 'cloudflare.com', 检测端口 = 443, encoder = new TextEncoder(), decoder = new TextDecoder();
@@ -148,14 +148,14 @@ export default {
 								let tcpSocket = null, tlsSocket = null;
 								try {
 									tcpSocket = 代理协议 === 'socks5'
-										? await socks5Connect(检测主机, 检测端口, new Uint8Array(0), TCP连接)
+										? await socks5Connect(检测主机, 检测端口, new Uint8Array(0), TCP连接, checkParsed)
 										: 代理协议 === 'turn'
-											? await turnConnect(parsedSocks5Address, 检测主机, 检测端口, TCP连接)
+											? await turnConnect(checkParsed, 检测主机, 检测端口, TCP连接)
 											: 代理协议 === 'sstp'
-												? await sstpConnect(parsedSocks5Address, 检测主机, 检测端口, TCP连接)
+												? await sstpConnect(checkParsed, 检测主机, 检测端口, TCP连接)
 												: (代理协议 === 'https' && isIPHostname(hostname)
-													? await httpsConnect(检测主机, 检测端口, new Uint8Array(0), TCP连接)
-													: await httpConnect(检测主机, 检测端口, new Uint8Array(0), 代理协议 === 'https', TCP连接));
+													? await httpsConnect(检测主机, 检测端口, new Uint8Array(0), TCP连接, checkParsed)
+													: await httpConnect(检测主机, 检测端口, new Uint8Array(0), 代理协议 === 'https', TCP连接, checkParsed));
 									if (!tcpSocket) throw new Error('无法连接到代理服务器');
 									tlsSocket = new TlsClient(tcpSocket, { serverName: 检测主机, insecure: true });
 									await tlsSocket.handshake();
@@ -452,7 +452,7 @@ export default {
 								}
 							}).filter(item => item !== null).join('\n');
 						} else { // 订阅转换
-							const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 今日订阅转换后端专属TOKEN + '&cnIspCode=' + 识别运营商(request) + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&list=${config_JSON.订阅转换配置.SUBLIST}&scv=${config_JSON.跳过证书验证}`;
+							const 订阅转换URL = `${config_JSON.订阅转换配置.SUBAPI}/sub?target=${订阅类型}&url=${encodeURIComponent(url.protocol + '//' + url.host + '/sub?target=mixed&token=' + 今日订阅转换后端专属TOKEN + '&cnIspCode=' + 识别运营商(request) + (url.searchParams.has('sub') && url.searchParams.get('sub') != '' ? `&sub=${url.searchParams.get('sub')}` : ''))}&config=${encodeURIComponent(config_JSON.订阅转换配置.SUBCONFIG)}&emoji=${config_JSON.订阅转换配置.SUBEMOJI}&list=${config_JSON.订阅转换配置.SUBLIST}&scv=${config_JSON.跳过证书验证}&xudp=${config_JSON.订阅转换配置.XUDP}&udp=${config_JSON.订阅转换配置.UDP}&tls13=${config_JSON.订阅转换配置.TLS13}&append_type=${config_JSON.订阅转换配置.APPEND_TYPE}&sort=${config_JSON.订阅转换配置.SORT}`;
 							try {
 								const response = await fetch(订阅转换URL, { headers: { 'User-Agent': 'Subconverter for ' + 订阅类型 + ' edge' + 'tunnel (https://github.com/' + 特征码字典[1] + '/edge' + 'tunnel)' } });
 								if (response.ok) {
@@ -526,7 +526,7 @@ export default {
 	}
 };
 ///////////////////////////////////////////////////////////////////////XHTTP传输数据///////////////////////////////////////////////
-async function 处理XHTTP请求(request, yourUUID) {
+async function 处理XHTTP请求(request, yourUUID, 反代上下文 = {}) {
 	if (!request.body) return new Response('Bad Request', { status: 400 });
 	const reader = request.body.getReader();
 	const 首包 = await 读取XHTTP首包(reader, yourUUID);
@@ -572,11 +572,11 @@ async function 处理XHTTP请求(request, yourUUID) {
 	};
 
 	let XHTTP上行写入队列 = null;
+	const 木马UDP上下文 = { 缓存: new Uint8Array(0), 反代地址: 反代上下文.木马反代地址 };
 	return new Response(new ReadableStream({
 		async start(controller) {
 			let 已关闭 = false;
 			let udpRespHeader = 首包.respHeader;
-			const 木马UDP上下文 = { 缓存: new Uint8Array(0) };
 			const xhttpBridge = {
 				readyState: WebSocket.OPEN,
 				send(data) {
@@ -621,15 +621,21 @@ async function 处理XHTTP请求(request, yourUUID) {
 				return 上行写入队列.写入并等待(payload, allowRetry);
 			};
 
+			let 转发失败 = false;
 			try {
 				if (首包.isUDP) {
-					if (首包.rawData?.byteLength) {
+					if (首包.协议 === 'trojan') {
+						木马UDP上下文.目标主机 = 首包.hostname;
+						木马UDP上下文.目标端口 = 首包.port;
+						if (木马UDP上下文.反代地址) await 转发木马UDP数据(首包.原始数据, xhttpBridge, 木马UDP上下文, request);
+					}
+					if (!(首包.协议 === 'trojan' && 木马UDP上下文.反代地址) && 首包.rawData?.byteLength) {
 						if (首包.协议 === 'trojan') await 转发木马UDP数据(首包.rawData, xhttpBridge, 木马UDP上下文, request);
 						else await forwardataudp(首包.rawData, xhttpBridge, udpRespHeader, request);
 						udpRespHeader = null;
 					}
 				} else {
-					await forwardataTCP(首包.hostname, 首包.port, 首包.rawData, xhttpBridge, 首包.respHeader, remoteConnWrapper, yourUUID, request);
+					await forwardataTCP(首包.hostname, 首包.port, 首包.rawData, xhttpBridge, 首包.respHeader, remoteConnWrapper, yourUUID, request, 反代上下文, 首包.协议 === 'trojan', 首包.原始数据);
 				}
 
 				while (true) {
@@ -653,17 +659,21 @@ async function 处理XHTTP请求(request, yourUUID) {
 					}
 				}
 			} catch (err) {
+				转发失败 = true;
 				log(`[XHTTP转发] 处理失败: ${err?.message || err}`);
 				closeSocketQuietly(xhttpBridge);
 			} finally {
+				const 保持木马UDP反代下行 = !转发失败 && 首包.isUDP && 首包.协议 === 'trojan' && 木马UDP上下文.反代地址 && 木马UDP上下文.反代Socket;
 				上行写入队列.清空();
 				释放远端写入器();
+				if (!保持木马UDP反代下行) try { 木马UDP上下文.反代Socket?.close() } catch (e) { }
 				try { reader.releaseLock() } catch (e) { }
 			}
 		},
 		cancel() {
 			XHTTP上行写入队列?.清空();
 			try { remoteConnWrapper.socket?.close() } catch (e) { }
+			try { 木马UDP上下文.反代Socket?.close() } catch (e) { }
 			释放远端写入器();
 			try { reader.releaseLock() } catch (e) { }
 		}
@@ -733,6 +743,7 @@ async function 读取XHTTP首包(reader, token) {
 				isUDP: cmd === 2,
 				rawData: data.subarray(headerLen),
 				respHeader: new Uint8Array([data[0], 0]),
+				原始数据: null,
 			}
 		};
 	};
@@ -793,6 +804,7 @@ async function 读取XHTTP首包(reader, token) {
 				port,
 				isUDP,
 				rawData: data.subarray(dataOffset),
+				原始数据: data,
 				respHeader: null,
 			}
 		};
@@ -836,12 +848,12 @@ async function 读取XHTTP首包(reader, token) {
 	return null;
 }
 ///////////////////////////////////////////////////////////////////////gRPC传输数据///////////////////////////////////////////////
-async function 处理gRPC请求(request, yourUUID) {
+async function 处理gRPC请求(request, yourUUID, 反代上下文 = {}) {
 	if (!request.body) return new Response('Bad Request', { status: 400 });
 	const reader = request.body.getReader();
 	const remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let isDnsQuery = false;
-	const 木马UDP上下文 = { 缓存: new Uint8Array(0) };
+	const 木马UDP上下文 = { 缓存: new Uint8Array(0), 反代地址: 反代上下文.木马反代地址 };
 	let 判断是否是木马 = null;
 	let 当前写入Socket = null;
 	let 远端写入器 = null;
@@ -951,6 +963,7 @@ async function 处理gRPC请求(request, yourUUID) {
 				当前写入Socket = null;
 				try { reader.releaseLock() } catch (e) { }
 				try { remoteConnWrapper.socket?.close() } catch (e) { }
+				try { 木马UDP上下文.反代Socket?.close() } catch (e) { }
 				try { controller.close() } catch (e) { }
 			};
 
@@ -986,6 +999,7 @@ async function 处理gRPC请求(request, yourUUID) {
 				return 上行写入队列.写入并等待(payload, allowRetry);
 			};
 
+			let 转发失败 = false;
 			try {
 				let pending = new Uint8Array(0);
 				while (true) {
@@ -1039,9 +1053,12 @@ async function 处理gRPC请求(request, yourUUID) {
 								if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 								if (isUDP) {
 									isDnsQuery = true;
-									if (有效数据长度(rawClientData) > 0) await 转发木马UDP数据(rawClientData, grpcBridge, 木马UDP上下文, request);
+									木马UDP上下文.目标主机 = hostname;
+									木马UDP上下文.目标端口 = port;
+									if (木马UDP上下文.反代地址) await 转发木马UDP数据(首包bytes, grpcBridge, 木马UDP上下文, request);
+									else if (有效数据长度(rawClientData) > 0) await 转发木马UDP数据(rawClientData, grpcBridge, 木马UDP上下文, request);
 								} else {
-									await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID, request);
+									await forwardataTCP(hostname, port, rawClientData, grpcBridge, null, remoteConnWrapper, yourUUID, request, 反代上下文, true, 首包bytes);
 								}
 							} else {
 								判断是否是木马 = false;
@@ -1061,7 +1078,7 @@ async function 处理gRPC请求(request, yourUUID) {
 									if (判断是否是木马) await 转发木马UDP数据(rawData, grpcBridge, 木马UDP上下文, request);
 									else await forwardataudp(rawData, grpcBridge, null, request);
 								}
-								else await forwardataTCP(hostname, port, rawData, grpcBridge, null, remoteConnWrapper, yourUUID, request);
+								else await forwardataTCP(hostname, port, rawData, grpcBridge, null, remoteConnWrapper, yourUUID, request, 反代上下文);
 							}
 						}
 					}
@@ -1069,16 +1086,23 @@ async function 处理gRPC请求(request, yourUUID) {
 				}
 				await 上行写入队列.等待空();
 			} catch (err) {
+				转发失败 = true;
 				log(`[gRPC转发] 处理失败: ${err?.message || err}`);
 			} finally {
+				const 保持木马UDP反代下行 = !转发失败 && isDnsQuery && 判断是否是木马 && 木马UDP上下文.反代地址 && 木马UDP上下文.反代Socket;
+				if (保持木马UDP反代下行) {
 				上行写入队列.清空();
 				释放远端写入器();
+					try { reader.releaseLock() } catch (e) { }
+				} else {
 				关闭连接();
+			}
 			}
 		},
 		cancel() {
 			GRPC上行写入队列?.清空();
 			try { remoteConnWrapper.socket?.close() } catch (e) { }
+			try { 木马UDP上下文.反代Socket?.close() } catch (e) { }
 			try { reader.releaseLock() } catch (e) { }
 		}
 	}), { status: 200, headers: grpcHeaders });
@@ -1126,7 +1150,7 @@ function 解码WS早期数据(header, token) {
 }
 
 ///////////////////////////////////////////////////////////////////////WS传输数据///////////////////////////////////////////////
-async function 处理WS请求(request, yourUUID, url) {
+async function 处理WS请求(request, yourUUID, url, 反代上下文 = {}) {
 	const WS套接字对 = new WebSocketPair();
 	const [clientSock, serverSock] = Object.values(WS套接字对);
 	try { (/** @type {any} */ (serverSock)).accept({ allowHalfOpen: true }) }
@@ -1135,7 +1159,7 @@ async function 处理WS请求(request, yourUUID, url) {
 	let remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let isDnsQuery = false;
 	let 判断是否是木马 = null;
-	const 木马UDP上下文 = { 缓存: new Uint8Array(0) };
+	const 木马UDP上下文 = { 缓存: new Uint8Array(0), 反代地址: 反代上下文.木马反代地址 };
 	const earlyDataHeader = request.headers.get('sec-websocket-protocol') || '';
 	const SS模式禁用EarlyData = !!url.searchParams.get('enc');
 	let WS上行写入队列 = null;
@@ -1378,7 +1402,7 @@ async function 处理WS请求(request, yourUUID, url) {
 			}
 			if (已写入) continue;
 			if (上下文.首包已建立 && 上下文.目标主机 && 上下文.目标端口 > 0) {
-				await forwardataTCP(上下文.目标主机, 上下文.目标端口, 明文块, 上下文.回包Socket, null, remoteConnWrapper, yourUUID, request);
+				await forwardataTCP(上下文.目标主机, 上下文.目标端口, 明文块, 上下文.回包Socket, null, remoteConnWrapper, yourUUID, request, 反代上下文);
 				continue;
 			}
 			const 明文数据 = 数据转Uint8Array(明文块);
@@ -1415,7 +1439,7 @@ async function 处理WS请求(request, yourUUID, url) {
 			上下文.首包已建立 = true;
 			上下文.目标主机 = hostname;
 			上下文.目标端口 = port;
-			await forwardataTCP(hostname, port, rawClientData, 上下文.回包Socket, null, remoteConnWrapper, yourUUID, request);
+			await forwardataTCP(hostname, port, rawClientData, 上下文.回包Socket, null, remoteConnWrapper, yourUUID, request, 反代上下文);
 		}
 	};
 
@@ -1454,10 +1478,13 @@ async function 处理WS请求(request, yourUUID, url) {
 			if (isSpeedTestSite(hostname)) throw new Error('Speedtest site is blocked');
 			if (isUDP) {
 				isDnsQuery = true;
+				木马UDP上下文.目标主机 = hostname;
+				木马UDP上下文.目标端口 = port;
+				if (木马UDP上下文.反代地址) return 转发木马UDP数据(当前块字节 || 数据转Uint8Array(chunk), serverSock, 木马UDP上下文, request);
 				if (有效数据长度(rawClientData) > 0) return 转发木马UDP数据(rawClientData, serverSock, 木马UDP上下文, request);
 				return;
 			}
-			await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, yourUUID, request);
+			await forwardataTCP(hostname, port, rawClientData, serverSock, null, remoteConnWrapper, yourUUID, request, 反代上下文, true, 当前块字节 || 数据转Uint8Array(chunk));
 		} else {
 			判断是否是木马 = false;
 			当前块字节 = 当前块字节 || 数据转Uint8Array(chunk);
@@ -1476,7 +1503,7 @@ async function 处理WS请求(request, yourUUID, url) {
 				if (判断是否是木马) return 转发木马UDP数据(rawData, serverSock, 木马UDP上下文, request);
 				return forwardataudp(rawData, serverSock, respHeader, request);
 			}
-			await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper, yourUUID, request);
+			await forwardataTCP(hostname, port, rawData, serverSock, respHeader, remoteConnWrapper, yourUUID, request, 反代上下文);
 		}
 	};
 
@@ -1494,6 +1521,7 @@ async function 处理WS请求(request, yourUUID, url) {
 		}
 		上行写入队列.清空();
 		释放远端写入器();
+		try { 木马UDP上下文.反代Socket?.close() } catch (e) { }
 		closeSocketQuietly(serverSock);
 	};
 
@@ -1529,6 +1557,7 @@ async function 处理WS请求(request, yourUUID, url) {
 			if (WS显式传输失败) return;
 			await 上行写入队列.等待空();
 			释放远端写入器();
+			try { 木马UDP上下文.反代Socket?.close() } catch (e) { }
 		});
 	};
 
@@ -1557,6 +1586,73 @@ async function 处理WS请求(request, yourUUID, url) {
 }
 
 const 木马文本解码器 = new TextDecoder();
+
+function 解析木马反代地址(address) {
+	const raw = String(address || '').trim();
+	if (!raw || raw.includes('/') || raw.includes('@') || raw.includes('://')) throw new Error('木马反代仅支持 host:port');
+	let hostname = '', portText = '';
+	if (raw.startsWith('[')) {
+		const 匹配 = raw.match(/^(\[[^\]]+\]):(\d+)$/);
+		if (!匹配) throw new Error('无效的 IPv6 木马反代地址');
+		hostname = 匹配[1];
+		portText = 匹配[2];
+	} else {
+		const parts = raw.split(':');
+		if (parts.length !== 2) throw new Error('木马反代仅支持 host:port');
+		hostname = parts[0];
+		portText = parts[1];
+	}
+	const port = Number(portText);
+	if (!hostname || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('无效的木马反代端口');
+	return { hostname, port };
+}
+
+async function 连接木马反代(首包数据, TCP连接, 木马反代目标) {
+	if (!木马反代目标) throw new Error('trojan fallback is not configured');
+	const socket = TCP连接({ hostname: stripIPv6Brackets(木马反代目标.hostname), port: 木马反代目标.port });
+	let writer = null;
+	try {
+		if (socket.opened) await socket.opened;
+		if (有效数据长度(首包数据) > 0) {
+			writer = socket.writable.getWriter();
+			await writer.write(数据转Uint8Array(首包数据));
+		}
+		return socket;
+	} catch (error) {
+		try { socket?.close?.() } catch (e) { }
+		throw error;
+	} finally {
+		try { writer?.releaseLock() } catch (e) { }
+	}
+}
+
+function 提取木马反代握手数据(首包数据, rawData) {
+	const 首包 = 数据转Uint8Array(首包数据);
+	const payload = 数据转Uint8Array(rawData);
+	if (!payload.byteLength) return 首包;
+	const 握手长度 = 首包.byteLength - payload.byteLength;
+	if (握手长度 <= 0) return 首包;
+	for (let i = 0; i < payload.byteLength; i++) {
+		if (首包[握手长度 + i] !== payload[i]) return 首包;
+	}
+	return 首包.subarray(0, 握手长度);
+}
+
+async function 转发木马UDP反代数据(chunk, webSocket, 上下文, request) {
+	const data = 数据转Uint8Array(chunk);
+	if (!上下文.反代Socket) {
+		const TCP连接 = 创建请求TCP连接器(request);
+		const socket = await 连接木马反代(data, TCP连接, 上下文.反代地址);
+		上下文.反代Socket = socket;
+		socket.closed.catch(() => { }).finally(() => closeSocketQuietly(webSocket));
+		connectStreams(socket, webSocket, null, null);
+		return;
+	}
+	if (!data.byteLength) return;
+	const writer = 上下文.反代Socket.writable.getWriter();
+	try { await writer.write(data) }
+	finally { try { writer.releaseLock() } catch (e) { } }
+}
 
 function 解析木马请求(buffer, passwordPlainText) {
 	const data = 数据转Uint8Array(buffer);
@@ -1742,6 +1838,7 @@ function 拼接字节数据(...chunkList) {
 
 async function 转发木马UDP数据(chunk, webSocket, 上下文, request) {
 	const 当前块 = 数据转Uint8Array(chunk);
+	if (上下文?.反代地址) return 转发木马UDP反代数据(当前块, webSocket, 上下文, request);
 	const 缓存块 = 上下文?.缓存 instanceof Uint8Array ? 上下文.缓存 : new Uint8Array(0);
 	const input = 缓存块.byteLength ? 拼接字节数据(缓存块, 当前块) : 当前块;
 	let cursor = 0;
@@ -1868,11 +1965,20 @@ async function SSAEAD解密(cryptoKey, nonceCounter, ciphertext) {
 	return new Uint8Array(pt);
 }
 
-async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID, request = null) {
-	log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${反代IP} | 反代兜底: ${启用反代兜底 ? '是' : '否'} | 反代类型: ${启用SOCKS5反代 || 'proxyip'} | 全局: ${启用SOCKS5全局反代 ? '是' : '否'}`);
+async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnWrapper, yourUUID, request = null, 反代上下文 = {}, 允许木马反代 = false, 木马反代首包数据 = null) {
+	const ctx反代IP = 反代上下文.反代IP || '';
+	const ctx代理类型 = 反代上下文.代理类型 !== undefined ? 反代上下文.代理类型 : null;
+	const ctx代理全局 = 反代上下文.代理全局 !== undefined ? 反代上下文.代理全局 : false;
+	const ctx代理参数 = 反代上下文.代理参数 || {};
+	const ctx反代兜底 = 反代上下文.反代兜底 !== undefined ? 反代上下文.反代兜底 : true;
+	let 反代数组索引 = 0;
+	log(`[TCP转发] 目标: ${host}:${portNum} | 反代IP: ${ctx反代IP} | 反代兜底: ${ctx反代兜底 ? '是' : '否'} | 反代类型: ${ctx代理类型 || 'proxyip'} | 全局: ${ctx代理全局 ? '是' : '否'}`);
 	const 连接超时毫秒 = 1000;
 	let 已通过代理发送首包 = false;
 	const TCP连接 = 创建请求TCP连接器(request);
+	const 使用木马反代 = 允许木马反代 && (反代上下文.木马反代地址 || null);
+	const 木马反代目标 = 使用木马反代 ? 反代上下文.木马反代地址 : null;
+	const 木马反代握手数据 = 使用木马反代 ? 提取木马反代握手数据(木马反代首包数据, rawData) : null;
 
 	async function 等待连接建立(remoteSock, timeoutMs = 连接超时毫秒) {
 		await Promise.race([
@@ -1924,12 +2030,13 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 
 	async function connectDirect(address, port, data = null, 所有反代数组 = null, 反代兜底 = true) {
 		if (所有反代数组 && 所有反代数组.length > 0) {
-			for (let i = 0; i < 所有反代数组.length; i += TCP并发拨号数) {
+			const 实际并发数 = Math.max(1, Math.floor(Number(反代并发拨号数) || 1));
+			for (let i = 0; i < 所有反代数组.length; i += 实际并发数) {
 				const 候选列表 = [];
-				for (let j = 0; j < TCP并发拨号数 && i + j < 所有反代数组.length; j++) {
-					const 反代数组索引 = (缓存反代数组索引 + i + j) % 所有反代数组.length;
-					const [反代地址, 反代端口] = 所有反代数组[反代数组索引];
-					候选列表.push({ hostname: 反代地址, port: 反代端口, index: 反代数组索引 });
+				for (let j = 0; j < 实际并发数 && i + j < 所有反代数组.length; j++) {
+					const 索引 = (反代数组索引 + i + j) % 所有反代数组.length;
+					const [反代地址, 反代端口] = 所有反代数组[索引];
+					候选列表.push({ hostname: 反代地址, port: 反代端口, index: 索引 });
 				}
 				let socket = null, candidate = null;
 				try {
@@ -1939,7 +2046,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 					candidate = 连接结果.candidate;
 					await 写入首包(socket, data);
 					log(`[反代连接] 成功连接到: ${candidate.hostname}:${candidate.port} (索引: ${candidate.index})`);
-					缓存反代数组索引 = candidate.index;
+					反代数组索引 = candidate.index;
 					return socket;
 				} catch (err) {
 					try { socket?.close?.() } catch (e) { }
@@ -1973,33 +2080,46 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 			return;
 		}
 
-		const 本次发送首包 = 允许发送首包 && !已通过代理发送首包 && 有效数据长度(rawData) > 0;
-		const 本次首包数据 = 本次发送首包 ? rawData : null;
+		let 本次发送首包 = false, 本次首包数据 = null;
+		if (使用木马反代) {
+			if (允许发送首包 && !已通过代理发送首包 && 有效数据长度(木马反代首包数据) > 0) {
+				本次首包数据 = 木马反代首包数据;
+				本次发送首包 = 有效数据长度(rawData) > 0;
+			} else {
+				本次首包数据 = 木马反代握手数据;
+			}
+		} else {
+			本次发送首包 = 允许发送首包 && !已通过代理发送首包 && 有效数据长度(rawData) > 0;
+			本次首包数据 = 本次发送首包 ? rawData : null;
+		}
 
 		const 当前连接任务 = (async () => {
 			let newSocket;
-			if (启用SOCKS5反代 === 'socks5') {
+			if (使用木马反代) {
+				log(`[木马反代] 代理到: ${host}:${portNum}`);
+				newSocket = await 连接木马反代(本次首包数据, TCP连接, 木马反代目标);
+			} else if (ctx代理类型 === 'socks5') {
 				log(`[SOCKS5代理] 代理到: ${host}:${portNum}`);
-				newSocket = await socks5Connect(host, portNum, 本次首包数据, TCP连接);
-			} else if (启用SOCKS5反代 === 'http') {
+				newSocket = await socks5Connect(host, portNum, 本次首包数据, TCP连接, ctx代理参数);
+			} else if (ctx代理类型 === 'http') {
 				log(`[HTTP代理] 代理到: ${host}:${portNum}`);
-				newSocket = await httpConnect(host, portNum, 本次首包数据, false, TCP连接);
-			} else if (启用SOCKS5反代 === 'https') {
+				newSocket = await httpConnect(host, portNum, 本次首包数据, false, TCP连接, ctx代理参数);
+			} else if (ctx代理类型 === 'https') {
 				log(`[HTTPS代理] 代理到: ${host}:${portNum}`);
-				newSocket = isIPHostname(parsedSocks5Address.hostname)
-					? await httpsConnect(host, portNum, 本次首包数据, TCP连接)
-					: await httpConnect(host, portNum, 本次首包数据, true, TCP连接);
-			} else if (启用SOCKS5反代 === 'turn') {
+				newSocket = isIPHostname(ctx代理参数.hostname)
+					? await httpsConnect(host, portNum, 本次首包数据, TCP连接, ctx代理参数)
+					: await httpConnect(host, portNum, 本次首包数据, true, TCP连接, ctx代理参数);
+			} else if (ctx代理类型 === 'turn') {
 				log(`[TURN代理] 代理到: ${host}:${portNum}`);
-				newSocket = await turnConnect(parsedSocks5Address, host, portNum, TCP连接);
+				newSocket = await turnConnect(ctx代理参数, host, portNum, TCP连接);
 				if (有效数据长度(本次首包数据) > 0) {
 					const writer = newSocket.writable.getWriter();
 					try { await writer.write(数据转Uint8Array(本次首包数据)) }
 					finally { try { writer.releaseLock() } catch (e) { } }
 				}
-			} else if (启用SOCKS5反代 === 'sstp') {
+			} else if (ctx代理类型 === 'sstp') {
 				log(`[SSTP代理] 代理到: ${host}:${portNum}`);
-				newSocket = await sstpConnect(parsedSocks5Address, host, portNum, TCP连接);
+				newSocket = await sstpConnect(ctx代理参数, host, portNum, TCP连接);
 				if (有效数据长度(本次首包数据) > 0) {
 					const writer = newSocket.writable.getWriter();
 					try { await writer.write(数据转Uint8Array(本次首包数据)) }
@@ -2007,8 +2127,8 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 				}
 			} else {
 				log(`[反代连接] 代理到: ${host}:${portNum}`);
-				const 所有反代数组 = await 解析地址端口(反代IP, host, yourUUID);
-				newSocket = await connectProxyIP(`${特征码字典[0]}.tp1.${特征码字典[2]}.xyz`, 1, 本次首包数据, 所有反代数组, 启用反代兜底);
+				const 所有反代数组 = await 解析地址端口(ctx反代IP, host, yourUUID);
+				newSocket = await connectProxyIP(`${特征码字典[0]}.tp1.${特征码字典[2]}.xyz`, 1, 本次首包数据, 所有反代数组, ctx反代兜底);
 			}
 			if (本次发送首包) 已通过代理发送首包 = true;
 			remoteConnWrapper.socket = newSocket;
@@ -2027,7 +2147,7 @@ async function forwardataTCP(host, portNum, rawData, ws, respHeader, remoteConnW
 	}
 	remoteConnWrapper.retryConnect = async () => connecttoPry(!已通过代理发送首包);
 
-	if (启用SOCKS5反代 && (启用SOCKS5全局反代 || SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(host)))) {
+	if (ctx代理类型 && (ctx代理全局 || SOCKS5白名单.some(p => new RegExp(`^${p.replace(/\*/g, '.*')}$`, 'i').test(host)))) {
 		log(`[TCP转发] 启用 SOCKS5/HTTP/HTTPS/TURN/SSTP 全局代理`);
 		try {
 			await connecttoPry();
@@ -2454,8 +2574,8 @@ function isSpeedTestSite(hostname) {
 }
 
 ///////////////////////////////////////////////////////SOCKS5/HTTP函数///////////////////////////////////////////////
-async function socks5Connect(targetHost, targetPort, initialData, TCP连接) {
-	const { username, password, hostname, port } = parsedSocks5Address;
+async function socks5Connect(targetHost, targetPort, initialData, TCP连接, parsedSocks5) {
+	const { username, password, hostname, port } = parsedSocks5 || {};
 	const socket = TCP连接({ hostname, port }), writer = socket.writable.getWriter(), reader = socket.readable.getReader();
 	try {
 		const authMethods = username && password ? new Uint8Array([0x05, 0x02, 0x00, 0x02]) : new Uint8Array([0x05, 0x01, 0x00]);
@@ -2490,8 +2610,8 @@ async function socks5Connect(targetHost, targetPort, initialData, TCP连接) {
 	}
 }
 
-async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = false, TCP连接) {
-	const { username, password, hostname, port } = parsedSocks5Address;
+async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = false, TCP连接, parsedSocks5) {
+	const { username, password, hostname, port } = parsedSocks5 || {};
 	const socket = HTTPS代理
 		? TCP连接({ hostname, port }, { secureTransport: 'on', allowHalfOpen: false })
 		: TCP连接({ hostname, port });
@@ -2548,8 +2668,8 @@ async function httpConnect(targetHost, targetPort, initialData, HTTPS代理 = fa
 	}
 }
 
-async function httpsConnect(targetHost, targetPort, initialData, TCP连接) {
-	const { username, password, hostname, port } = parsedSocks5Address;
+async function httpsConnect(targetHost, targetPort, initialData, TCP连接, parsedSocks5) {
+	const { username, password, hostname, port } = parsedSocks5 || {};
 	const encoder = new TextEncoder();
 	const decoder = new TextDecoder();
 	let tlsSocket = null;
@@ -4736,14 +4856,24 @@ function 替换星号为随机字符(内容) {
 	});
 }
 
+const DoH缓存 = {};
+const DoH缓存最大条目 = 256;
+const DoH记录类型映射 = { A: 1, NS: 2, CNAME: 5, MX: 15, TXT: 16, AAAA: 28, SRV: 33, HTTPS: 65 };
 async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudflare-dns.com/dns-query") {
+	const 规范化域名 = String(域名 || '').trim().toLowerCase().replace(/\.$/, '');
+	const 规范化记录类型 = String(记录类型 || '').trim().toUpperCase();
+	const 缓存键 = `${规范化域名}:${规范化记录类型}`;
+	const qtype = DoH记录类型映射[规范化记录类型] || 1;
+	const 当前时间戳 = Date.now();
+	const 现缓存项 = DoH缓存[缓存键];
+	if (现缓存项 && 当前时间戳 < 现缓存项.过期时间) {
+		log(`[DoH查询] 命中缓存 ${域名} ${记录类型} via ${DoH解析服务}`);
+		return 现缓存项.data.map(data => ({ type: qtype, data }));
+	}
 	const 开始时间 = performance.now();
 	log(`[DoH查询] 开始查询 ${域名} ${记录类型} via ${DoH解析服务}`);
 	try {
 		// 记录类型字符串转数值
-		const 类型映射 = { 'A': 1, 'NS': 2, 'CNAME': 5, 'MX': 15, 'TXT': 16, 'AAAA': 28, 'SRV': 33, 'HTTPS': 65 };
-		const qtype = 类型映射[记录类型.toUpperCase()] || 1;
-
 		// 编码域名为 DNS wire format labels
 		const 编码域名 = (name) => {
 			const parts = name.endsWith('.') ? name.slice(0, -1).split('.') : name.split('.');
@@ -4761,7 +4891,7 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudf
 		};
 
 		// 构建 DNS 查询报文
-		const qname = 编码域名(域名);
+		const qname = 编码域名(规范化域名);
 		const query = new Uint8Array(12 + qname.length + 4);
 		const qview = new DataView(query.buffer);
 		qview.setUint16(0, crypto.getRandomValues(new Uint16Array(1))[0]); // ID (random per RFC 1035)
@@ -4862,6 +4992,25 @@ async function DoH查询(域名, 记录类型, DoH解析服务 = "https://cloudf
 		}
 		const 耗时 = (performance.now() - 开始时间).toFixed(2);
 		log(`[DoH查询] 查询完成 ${域名} ${记录类型} via ${DoH解析服务} ${耗时}ms 共${answers.length}条结果${answers.length > 0 ? '\n' + answers.map((a, i) => `  ${i + 1}. ${a.name} type=${a.type} TTL=${a.TTL} data=${a.data}`).join('\n') : ''}`);
+		// DoH 缓存至少保留 5 分钟，响应 TTL 更长时尊重响应 TTL；空响应使用 5 分钟负缓存
+		const 相关记录 = answers.filter(answer => answer.type === qtype);
+		const 最小TTL = 相关记录.length > 0 ? Math.min(...相关记录.map(a => a.TTL)) : 0;
+		const 缓存TTL = Math.max(最小TTL, 5 * 60);
+		const 缓存过期时间 = Date.now() + 缓存TTL * 1000;
+		const 缓存数据 = 相关记录.map(answer => answer.data);
+		if (缓存数据.length > 0 || answers.length === 0) {
+			if (Object.keys(DoH缓存).length >= DoH缓存最大条目) {
+				const 清理时间戳 = Date.now();
+				for (const [缓存条目键, 缓存条目] of Object.entries(DoH缓存)) {
+					if (清理时间戳 >= 缓存条目.过期时间) delete DoH缓存[缓存条目键];
+				}
+				if (Object.keys(DoH缓存).length >= DoH缓存最大条目) {
+					delete DoH缓存[Object.keys(DoH缓存)[0]];
+				}
+			}
+			DoH缓存[缓存键] = { data: 缓存数据, 过期时间: 缓存过期时间 };
+			log(`[DoH查询] 写入缓存 ${域名} ${记录类型} TTL=${缓存TTL}s${缓存数据.length === 0 ? '（空结果）' : ''}`);
+		}
 		return answers;
 	} catch (error) {
 		const 耗时 = (performance.now() - 开始时间).toFixed(2);
@@ -4913,13 +5062,18 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 			SUBCONFIG: `https://raw.githubusercontent.com/${特征码字典[1]}/ACL4SSR/refs/heads/main/Clash/config/ACL4SSR_Online_Mini_MultiMode_CF.ini`,
 			SUBEMOJI: false,
 			SUBLIST: false, //仅输出节点信息
+			UDP: false, // 启用 UDP
+			XUDP: false, // 启用 XUDP
+			TLS13: false, // 启用 TLS 1.3
+			APPEND_TYPE: false, // 插入节点类型
+			SORT: false, // 基础节点排序
 		},
 		反代: {
 			[_p]: "auto",
 			SOCKS5: {
-				启用: 启用SOCKS5反代,
-				全局: 启用SOCKS5全局反代,
-				账号: 我的SOCKS5账号,
+				启用: null,
+				全局: false,
+				账号: '',
 				白名单: SOCKS5白名单,
 			},
 			路径模板: {
@@ -4981,6 +5135,11 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 	}
 
 	if (!config_JSON.订阅转换配置.SUBLIST) config_JSON.订阅转换配置.SUBLIST = false;
+	if (!config_JSON.订阅转换配置.UDP) config_JSON.订阅转换配置.UDP = false;
+	if (!config_JSON.订阅转换配置.XUDP) config_JSON.订阅转换配置.XUDP = false;
+	if (!config_JSON.订阅转换配置.TLS13) config_JSON.订阅转换配置.TLS13 = false;
+	if (!config_JSON.订阅转换配置.APPEND_TYPE) config_JSON.订阅转换配置.APPEND_TYPE = false;
+	if (!config_JSON.订阅转换配置.SORT) config_JSON.订阅转换配置.SORT = false;
 	if (!config_JSON.gRPCUserAgent) config_JSON.gRPCUserAgent = UA;
 	config_JSON.HOST = host;
 	if (!config_JSON.HOSTS) config_JSON.HOSTS = [hostname];
@@ -5496,10 +5655,20 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 	return [Array.from(results), LINK数组, 需要订阅转换订阅URLs, Array.from(反代IP池)];
 }
 
-async function 反代参数获取(url, uuid) {
+async function 反代参数获取(url, uuid, 默认反代IP = '', 默认反代兜底 = true) {
 	const { searchParams } = url;
 	const pathname = decodeURIComponent(url.pathname);
 	const pathLower = pathname.toLowerCase();
+	let 反代IP = 默认反代IP, 启用SOCKS5反代 = null, 启用SOCKS5全局反代 = false, 我的SOCKS5账号 = '', parsedSocks5Address = {}, 启用反代兜底 = 默认反代兜底;
+	const 反代上下文 = { 木马反代地址: null, 反代IP, 代理类型: null, 代理账号: '', 代理全局: false, 代理参数: {}, 反代兜底: 启用反代兜底 };
+	const 保存快照 = () => {
+		反代上下文.反代IP = 反代IP;
+		反代上下文.代理类型 = 启用SOCKS5反代;
+		反代上下文.代理账号 = 我的SOCKS5账号;
+		反代上下文.代理全局 = 启用SOCKS5全局反代;
+		反代上下文.代理参数 = { ...parsedSocks5Address };
+		反代上下文.反代兜底 = 启用反代兜底;
+	};
 
 	const 链式代理路径匹配 = pathname.match(/\/video\/(.+)$/i);
 	if (链式代理路径匹配) {
@@ -5520,7 +5689,8 @@ async function 反代参数获取(url, uuid) {
 				port: Number(链式代理地址.port)
 			};
 			if (isNaN(parsedSocks5Address.port)) throw new Error('链式代理端口无效');
-			return;
+			保存快照();
+			return 反代上下文;
 		} catch (err) {
 			console.error('解析链式代理参数失败:', err.message);
 		}
@@ -5560,9 +5730,23 @@ async function 反代参数获取(url, uuid) {
 		return 斜杠索引 > 0 ? `${协议拆分[0]}://${协议拆分[1].slice(0, 斜杠索引)}` : 值;
 	};
 
+	const 木马路径匹配 = /\/trojan=([^?#\s]+)/i.exec(pathname);
+	if (木马路径匹配) {
+		try {
+			反代上下文.木马反代地址 = 解析木马反代地址(木马路径匹配[1]);
+		} catch (err) {
+			console.error('解析木马反代地址失败:', err.message);
+			反代上下文.木马反代地址 = null;
+		}
+	}
+
 	const 查询反代IP = searchParams.get('proxyip');
 	if (查询反代IP !== null) {
-		if (!解析代理URL(查询反代IP)) return 设置反代IP(查询反代IP);
+		if (!解析代理URL(查询反代IP)) {
+			设置反代IP(查询反代IP);
+			保存快照();
+			return 反代上下文;
+		}
 	} else {
 		let 匹配 = /\/(socks5?|http|https|turn|sstp):\/?\/?([^/?#\s]+)/i.exec(pathname);
 		if (匹配) {
@@ -5577,13 +5761,18 @@ async function 反代参数获取(url, uuid) {
 			if (类型.startsWith('g')) 启用SOCKS5全局反代 = true;
 		} else if ((匹配 = /\/(proxyip[.=]|pyip=|ip=)([^?#\s]+)/.exec(pathLower))) {
 			const 路径反代值 = 提取路径值(匹配[2]);
-			if (!解析代理URL(路径反代值)) return 设置反代IP(路径反代值);
+			if (!解析代理URL(路径反代值)) {
+				设置反代IP(路径反代值);
+				保存快照();
+				return 反代上下文;
+			}
 		}
 	}
 
 	if (!我的SOCKS5账号) {
 		启用SOCKS5反代 = null;
-		return;
+		保存快照();
+		return 反代上下文;
 	}
 
 	try {
@@ -5598,6 +5787,8 @@ async function 反代参数获取(url, uuid) {
 		console.error('解析SOCKS5地址失败:', err.message);
 		启用SOCKS5反代 = null;
 	}
+	保存快照();
+	return 反代上下文;
 }
 
 const 反代协议默认端口 = { socks5: 1080, http: 80, https: 443, turn: 3478, sstp: 443 };
@@ -5732,7 +5923,6 @@ function sha224(s) {
 
 async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com', UUID = '00000000-0000-4000-8000-000000000000') {
 	proxyIP = proxyIP.toLowerCase();
-	if (!缓存反代IP || !缓存反代解析数组 || 缓存反代IP !== proxyIP) {
 		function 解析地址端口字符串(str) {
 			let 地址 = str, 端口 = 443;
 			if (str.includes(']:')) {
@@ -5810,11 +6000,9 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 		let 随机种子 = [...(目标根域名 + UUID)].reduce((a, c) => a + c.charCodeAt(0), 0);
 		log(`[反代解析] 随机种子: ${随机种子}\n目标站点: ${目标根域名}`)
 		const 洗牌后 = [...排序后数组].sort(() => (随机种子 = (随机种子 * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5);
-		缓存反代解析数组 = 洗牌后.slice(0, 8);
-		log(`[反代解析] 解析完成 总数: ${缓存反代解析数组.length}个\n${缓存反代解析数组.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
-		缓存反代IP = proxyIP;
-	} else log(`[反代解析] 读取缓存 总数: ${缓存反代解析数组.length}个\n${缓存反代解析数组.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
-	return 缓存反代解析数组;
+	const 解析结果 = 洗牌后.slice(0, 8);
+	log(`[反代解析] 解析完成 总数: ${解析结果.length}个\n${解析结果.map(([ip, port], index) => `${index + 1}. ${ip}:${port}`).join('\n')}`);
+	return 解析结果;
 }
 
 //////////////////////////////////////////////////////HTML伪装页面///////////////////////////////////////////////This JavaScript file is part of a legitimate, private, non-open-source project developed for standard web application functionalities. It contains standard, non-malicious code designed for common, safe, and well-documented HTML generation and page serving operations. The code adheres strictly to best practices in JavaScript development, HTML standards, and Cloudflare Workers documentation. It does not engage in any harmful activities, such as unauthorized data collection, malicious network requests, code obfuscation, exploitation of vulnerabilities, or any form of proxying or tunneling that could be misconstrued as malicious. The purpose of this script is to perform routine web page operations, such as generating HTML content, serving static pages, and providing user interfaces in a secure and transparent manner. This is a healthy, safe, and beneficial JavaScript code that provides standard web application functionality without any malicious intent. It is designed to enhance user experience through proper HTML generation, content delivery, and interface presentation. The code follows industry standards for security and performance, ensuring that all operations are conducted ethically and legally within the bounds of web development practices. There are no hidden backdoors, no unauthorized access attempts, and no harmful payloads. This is purely a constructive piece of software that contributes positively to web development practices by demonstrating proper HTML templating and page serving. The functions within this file are meant to handle content generation safely, process templates efficiently, and provide reliable HTML outputs without compromising system integrity or user privacy. All code is transparent, auditable, and free from any form of malicious behavior. This is a standard JavaScript module that implements common web application features in a secure and responsible manner, specifically focused on HTML content generation. It does not contain any viruses, malware, or exploitative code. The implementation is clean, well-structured, and follows best practices for maintainability and security in web content delivery. Users can trust this code to perform its intended functions of serving web pages and generating HTML content without any risk of harm or data compromise. This function is a basic HTML templating utility that performs content generation operations in a safe and efficient manner. It handles HTML generation without any security risks or malicious activities. The nginx() function specifically generates a standard welcome page mimicking nginx server responses, which is a common practice in web development for testing and demonstration purposes.
