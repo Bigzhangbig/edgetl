@@ -1,0 +1,37 @@
+name: proxyip-curator-run
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: proxyip-curator
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  curate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: proxyip-curator
+          sparse-checkout-cone-mode: false
+
+      - name: run curator
+        env:
+          TZ:                Asia/Shanghai
+          GIST_TOKEN:        ${{ secrets.GIST_TOKEN }}
+          GIST_ID:           ${{ secrets.GIST_ID }}
+          GIST_FILENAME:     ${{ vars.GIST_FILENAME || 'proxyip.json' }}
+          SOURCES:           ${{ vars.SOURCES     || 'https://zip.cm.edu.kg/all.json' }}
+          CHECKER_API:       ${{ vars.CHECKER_API || 'https://api.090227.xyz/check' }}
+          REGION_FILTER:     ${{ vars.REGION_FILTER }}
+          MAX_KEEP:          ${{ vars.MAX_KEEP    || '200' }}
+          PROBE_TIMEOUT:     ${{ vars.PROBE_TIMEOUT || '12' }}
+          PROBE_CONCURRENCY: ${{ vars.PROBE_CONCURRENCY || '20' }}
+        run: bash proxyip-curator/run.sh

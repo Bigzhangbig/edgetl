@@ -1,7 +1,6 @@
 #!/bin/bash
 # ponytail: one-shot curation cycle. retest -> fetch -> probe -> merge -> upload -> re-verify.
-set -u
-set -o pipefail
+set -euo pipefail
 
 : "${GIST_TOKEN:?GIST_TOKEN required}"
 : "${GIST_ID:?GIST_ID required}"
@@ -47,7 +46,7 @@ probe_list() {
 # ---------- fetch current gist state ----------
 fetch_current() {
   local url="https://api.github.com/gists/${GIST_ID}"
-  curl -sS -H "Authorization: Bearer $GIST_TOKEN" \
+  curl -fsS -H "Authorization: Bearer $GIST_TOKEN" \
        -H "Accept: application/vnd.github+json" "$url" \
     | jq -r --arg f "$GIST_FILENAME" '.files[$f].content // ""'
 }
@@ -111,7 +110,7 @@ fetch_sources() {
 }
 
 # ---------- main flow ----------
-cur_json=$(fetch_current)
+cur_json=$(fetch_current) || { log "ERROR: fetch_current failed, aborting"; exit 1; }
 log "current gist has $(echo "$cur_json" | jq 'length? // 0' 2>/dev/null || echo 0) entries"
 
 # 1. Retest existing entries (verification step per user requirement)
