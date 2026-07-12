@@ -1,5 +1,6 @@
 const Version = '2026-07-11 19:02:35 (Merged Upstream)';
 let config_JSON, 缓存SOCKS5白名单 = null, 调试日志打印 = false;
+let 缓存PROXYIP池 = null, 缓存PROXYIP池时间戳 = 0, 缓存PROXYIP池键 = '';
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
 ///////////////////////////////////////////////////////全局常量和工具函数///////////////////////////////////////////////
@@ -42,9 +43,11 @@ export default {
 		if (!env.TCP_CONCURRENT_DIAL && TCP并发拨号数 !== 1 && 识别运营商(request) === 'cmcc') TCP并发拨号数 = 1;
 		let 默认反代IP = (`${request.cf.colo}.${特征码字典[0]}.${特征码字典[1]}SsSs.nEt`).toLowerCase(), 默认反代兜底 = true;
 		if (env.PROXYIP) {
-			const proxyIPs = await 整理成数组(env.PROXYIP);
-			默认反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
-			默认反代兜底 = false;
+			const proxyIPs = await 获取PROXYIP池(env.PROXYIP);
+			if (proxyIPs.length > 0) {
+				默认反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
+				默认反代兜底 = false;
+			}
 		};
 		const 访问IP = request.headers.get('CF-Connecting-IP') || request.headers.get('True-Client-IP') || request.headers.get('X-Real-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Cluster-Client-IP') || '未知IP';
 		if (缓存SOCKS5白名单 === null) {
@@ -5337,6 +5340,35 @@ async function 整理成数组(内容) {
 	if (替换后的内容.charAt(替换后的内容.length - 1) == ',') 替换后的内容 = 替换后的内容.slice(0, 替换后的内容.length - 1);
 	const 地址数组 = 替换后的内容.split(',');
 	return 地址数组;
+}
+
+// ponytail: 支持 env.PROXYIP 是 URL / JSON 数组 / 逗号列表。5min 内存缓存。
+async function 获取PROXYIP池(PROXYIP值) {
+	const 缓存TTL秒 = 300;
+	const 当前时间 = Date.now();
+	if (缓存PROXYIP池 && 缓存PROXYIP池键 === PROXYIP值 && (当前时间 - 缓存PROXYIP池时间戳) < 缓存TTL秒 * 1000) return 缓存PROXYIP池;
+	let 池 = [];
+	try {
+		if (/^https?:\/\//i.test(PROXYIP值.trim())) {
+			const res = await fetch(PROXYIP值.trim(), { cf: { cacheTtl: 60 } });
+			if (res.ok) {
+				const 文本 = await res.text();
+				try {
+					const 解析 = JSON.parse(文本);
+					if (Array.isArray(解析)) 池 = 解析.map(x => (typeof x === 'string') ? x : (x && x.proxy) ? x.proxy : '').filter(Boolean);
+				} catch {
+					const 首字 = 文本.trim().charAt(0);
+					if (首字 === '[' || 首字 === '{') 池 = [];
+					else 池 = await 整理成数组(文本);
+				}
+			}
+		} else {
+			池 = await 整理成数组(PROXYIP值);
+		}
+	} catch { 池 = []; }
+	池 = 池.map(s => String(s).split('#')[0].trim()).filter(Boolean);
+	if (池.length > 0) { 缓存PROXYIP池 = 池; 缓存PROXYIP池时间戳 = 当前时间; 缓存PROXYIP池键 = PROXYIP值; }
+	return 池;
 }
 
 async function 获取优选订阅生成器数据(优选订阅生成器HOST) {
