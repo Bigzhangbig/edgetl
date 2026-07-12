@@ -78,7 +78,7 @@ fetch_sources() {
     [ -z "$u" ] && continue
     log "fetch: $u"
     local raw
-    raw=$(curl -sS --max-time 20 "$u" 2>/dev/null) || continue
+    raw=$(curl -fsS --max-time 20 --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 8 "$u" 2>/dev/null) || continue
     # try json first
     if echo "$raw" | jq -e . >/dev/null 2>&1; then
       # common shapes: [{ip,port,tag}], [{proxyip}], {items:[...]}
@@ -149,9 +149,9 @@ merged_json="$WORK/merged.json"
   awk -F'\t' '$2=="true"' "$retest_tsv"
   # new that pass
   awk -F'\t' '$2=="true"' "$new_tsv"
-} | jq -Rs --arg map_file "$new_txt.map" '
+} | jq -Rs '
     split("\n") | map(select(length>0)) | map(split("\t"))
-    | map({proxy: .[0], v4: .[2]=="true", v6: .[3]=="true", ms: (.[4]|tonumber? // null), colo: .[5]})
+    | map({proxy: .[0], v4: (.[2]=="true"), v6: (.[3]=="true"), ms: (.[4]|tonumber? // null), colo: .[5]})
     | unique_by(.proxy)
     | sort_by(.ms // 99999)
   ' > "$merged_json"
