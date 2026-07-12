@@ -78,7 +78,7 @@ fetch_sources() {
     [ -z "$u" ] && continue
     log "fetch: $u"
     local raw
-    raw=$(curl -fsS --max-time 20 --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 8 "$u" 2>/dev/null) || continue
+    raw=$(curl -fsS --connect-timeout 8 --speed-time 30 --speed-limit 1024 --max-time 120 --retry 3 --retry-all-errors --retry-delay 2 "$u" 2>/dev/null) || continue
     # try json first
     if echo "$raw" | jq -e . >/dev/null 2>&1; then
       # common shapes: [{ip,port,tag}], [{proxyip}], {items:[...]}
