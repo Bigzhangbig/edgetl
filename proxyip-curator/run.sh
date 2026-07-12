@@ -78,7 +78,19 @@ fetch_sources() {
     [ -z "$u" ] && continue
     log "fetch: $u"
     local raw
-    raw=$(curl -fsS --connect-timeout 8 --speed-time 30 --speed-limit 1024 --max-time 120 --retry 3 --retry-all-errors --retry-delay 2 "$u" 2>/dev/null) || continue
+    curl_err=$(mktemp)
+    set +e
+    raw=$(curl -fsS --connect-timeout 8 --speed-time 30 --speed-limit 1024 --max-time 120 --retry 3 --retry-all-errors --retry-delay 2 -A 'Mozilla/5.0 (compatible; proxyip-curator/1.0)' "$u" 2>"$curl_err")
+    curl_rc=$?
+    set -e
+    if [ $curl_rc -ne 0 ]; then
+      log "curl fail rc=$curl_rc, stderr:"
+      log "$(cat "$curl_err")"
+      rm -f "$curl_err"
+      continue
+    fi
+    rm -f "$curl_err"
+    log "curl ok: fetched $(printf %s "$raw" | wc -c) bytes"
     # try json first
     if echo "$raw" | jq -e . >/dev/null 2>&1; then
       # common shapes: [{ip,port,tag}], [{proxyip}], {items:[...]}
