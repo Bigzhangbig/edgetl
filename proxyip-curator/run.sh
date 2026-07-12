@@ -83,13 +83,17 @@ fetch_sources() {
     if echo "$raw" | jq -e . >/dev/null 2>&1; then
       # common shapes: [{ip,port,tag}], [{proxyip}], {items:[...]}
       echo "$raw" | jq -r '
-        (if type=="array" then . elif .items then .items else [] end)
+        (if type=="array" then . elif .items then .items elif .data then .data else [] end)
         | .[]
         | (if .proxyip then .proxyip
-           elif .ip and .port then "\(.ip):\(.port)"
+           # ponytail: multi-port .port arrays: only first port used, siblings dropped.
+           elif .ip and (.port|type=="array") and (.port|length>0) then "\(.ip):\(.port[0])"
+           elif .ip and (.port != null) and ((.port|tostring) != "") then "\(.ip):\(.port)"
            elif .ip then "\(.ip):443"
            else empty end) as $addr
-        | if .tag or .country or .region then "\($addr)#\(.tag // .country // .region)" else $addr end
+        | ($addr | select(. != null and . != "")) as $addr
+        | (.tag // .country // .region // .meta?.country? // .meta?.colo?.iata? // "") as $tag
+        | if ($tag|length)>0 then "\($addr)#\($tag)" else $addr end
       ' 2>/dev/null >> "$out" || true
     else
       # plain text, keep ip:port#tag or ip:port
