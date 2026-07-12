@@ -19,7 +19,7 @@ Alpine 3.20 + curl + jq + bash,~15MB。
 | `MAX_KEEP` | | 单次保留上限,默认 200 |
 | `PROBE_TIMEOUT` | | 单次探测超时秒,默认 12 |
 | `PROBE_CONCURRENCY` | | 并发,默认 20 |
-| `INTERVAL_SEC` | | 循环间隔秒,默认 21600 (6h) |
+| `INTERVAL_SEC` | | 循环间隔秒,默认 1800 (30min)。本地 15h × 86 IP 稳定性测试:30min 内累计新失败 <2%,6h 会累计到 ~6%。加密可选 900(15min,~<1%)或 3600(1h,~3%)。 |
 
 ## 本地构建(orbstack,用清华镜像)
 
@@ -43,7 +43,7 @@ docker run -d --name proxyip-curator --restart=unless-stopped \
   -e SOURCES="https://zip.cm.edu.kg/all.json" \
   -e REGION_FILTER=JP,HK,SG \
   -e MAX_KEEP=100 \
-  -e INTERVAL_SEC=21600 \
+  -e INTERVAL_SEC=1800 \
   proxyip-curator:local
 ```
 

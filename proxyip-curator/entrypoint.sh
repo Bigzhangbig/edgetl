@@ -1,7 +1,7 @@
 #!/bin/bash
 # ponytail: loop forever, sleep INTERVAL_SEC between cycles.
 set -u
-: "${INTERVAL_SEC:=21600}"
+: "${INTERVAL_SEC:=1800}"
 
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 

@@ -15,7 +15,7 @@ RUN set -eux; \
     rm -rf /var/cache/apk/*
 
 ENV TZ=Asia/Shanghai \
-    INTERVAL_SEC=21600 \
+    INTERVAL_SEC=1800 \
     MAX_KEEP=200 \
     PROBE_TIMEOUT=12 \
     PROBE_CONCURRENCY=20 \
