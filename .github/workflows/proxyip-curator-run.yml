@@ -34,4 +34,5 @@ jobs:
           MAX_KEEP:          ${{ vars.MAX_KEEP    || '200' }}
           PROBE_TIMEOUT:     ${{ vars.PROBE_TIMEOUT || '12' }}
           PROBE_CONCURRENCY: ${{ vars.PROBE_CONCURRENCY || '20' }}
+          PROXY_PREFIX:      ${{ secrets.PROXY_PREFIX }}
         run: bash proxyip-curator/run.sh
