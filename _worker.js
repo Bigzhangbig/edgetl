@@ -1,6 +1,7 @@
 const Version = '2026-07-11 19:02:35 (Merged Upstream)';
 let config_JSON, 缓存SOCKS5白名单 = null, 调试日志打印 = false;
 let 缓存PROXYIP池 = null, 缓存PROXYIP池时间戳 = 0, 缓存PROXYIP池键 = '';
+let 缓存KV_PROXYIP = null, 缓存KV_PROXYIP时间戳 = 0; // ponytail: admin 面板 PROXYIP 读 KV, 5min 内存缓存
 let SOCKS5白名单 = ['*tapecontent.net', '*cloudatacdn.com', '*loadshare.org', '*cdn-centaurus.com', 'scholar.google.com'];
 const Pages静态页面 = 'https://edt-pages.github.io';
 ///////////////////////////////////////////////////////全局常量和工具函数///////////////////////////////////////////////
@@ -42,8 +43,10 @@ export default {
 		TCP并发拨号数 = Math.max(1, Number(env.TCP_CONCURRENT_DIAL) || TCP并发拨号数);
 		if (!env.TCP_CONCURRENT_DIAL && TCP并发拨号数 !== 1 && 识别运营商(request) === 'cmcc') TCP并发拨号数 = 1;
 		let 默认反代IP = (`${request.cf.colo}.${特征码字典[0]}.${特征码字典[1]}SsSs.nEt`).toLowerCase(), 默认反代兜底 = true;
-		if (env.PROXYIP) {
-			const proxyIPs = await 获取PROXYIP池(env.PROXYIP);
+		// ponytail: env.PROXYIP 空时从 KV (admin 面板) 兜底, 5min 缓存. 用局部变量避免污染 isolate env
+		const 有效PROXYIP = env.PROXYIP || await 从KV读PROXYIP(env);
+		if (有效PROXYIP) {
+			const proxyIPs = await 获取PROXYIP池(有效PROXYIP);
 			if (proxyIPs.length > 0) {
 				默认反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
 				默认反代兜底 = false;
@@ -5369,6 +5372,23 @@ async function 获取PROXYIP池(PROXYIP值) {
 	池 = 池.map(s => String(s).split('#')[0].trim()).filter(Boolean);
 	if (池.length > 0) { 缓存PROXYIP池 = 池; 缓存PROXYIP池时间戳 = 当前时间; 缓存PROXYIP池键 = PROXYIP值; }
 	return 池;
+}
+
+// ponytail: admin 面板 PROXYIP 输入框 → KV config.json.反代.PROXYIP
+// 5min 内存缓存 (含空值缓存). 免费 KV: 100k reads/day.
+async function 从KV读PROXYIP(env) {
+	const 缓存TTL毫秒 = 300_000; // ponytail: 5min. 改小到 60_000 可加快 admin 保存后生效.
+	const 当前时间 = Date.now();
+	if (缓存KV_PROXYIP时间戳 && (当前时间 - 缓存KV_PROXYIP时间戳) < 缓存TTL毫秒) return 缓存KV_PROXYIP;
+	let 值 = null;
+	try {
+		const cfg = await env.KV?.get('config.json', 'json');
+		const 原始 = cfg?.反代?.[特征码字典[0]];
+		if (原始 && String(原始).trim().toLowerCase() !== 'auto') 值 = String(原始).trim();
+	} catch (e) { log(`[KV_PROXYIP] read failed: ${e?.message}`); }
+	缓存KV_PROXYIP = 值;
+	缓存KV_PROXYIP时间戳 = 当前时间;
+	return 值;
 }
 
 async function 获取优选订阅生成器数据(优选订阅生成器HOST) {

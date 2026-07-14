@@ -161,6 +161,14 @@ npx wrangler secret put PROXYIP
 # 粘: https://gist.githubusercontent.com/<user>/<GIST_ID>/raw/proxyip.json
 ```
 
+**新增: admin 面板 PROXYIP 输入框也能生效** (自本 commit)
+
+在 admin 面板 → **Cloudflare CDN 访问设置** → **PROXYIP** 框直接填写 (支持单 IP / 逗号列表 / URL / `auto`)。保存后:
+
+- 若未设置 `env.PROXYIP` Secret, 主入口出站反代 IP 会用 admin 面板的值 (最多 5 分钟生效, Worker isolate 级缓存)
+- `/sub` 生成的节点链接始终跟随 admin 面板值 (实时生效)
+- `env.PROXYIP` Secret 优先级 **高于** admin 面板值
+
 - 指定 `SOCKS5` 案例
    ```url
    /socks5=user:password@127.0.0.1:1080
