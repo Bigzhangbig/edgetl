@@ -146,6 +146,21 @@
    /?proxyip=proxyip.cmliussss.net
    ```
 
+**新增: `PROXYIP` 支持 URL 拉取** (自 `f1cc57c`)
+
+`PROXYIP` 可以是:
+- 单个 `ip:port` (原语义)
+- 逗号/换行分隔的 `ip:port` 列表 (原语义)
+- **HTTP(S) URL 指向 JSON 数组** — Worker 自动 fetch 并抽取 `.proxy` 字段, 5min 内存缓存, 空池自动回退到 `{colo}.proxyip.cmliussss.net` 兜底
+
+搭配 [proxyip-curator](./proxyip-curator/) 用法示例:
+
+```bash
+# 用 curator 生成的 gist raw URL 作为 PROXYIP
+npx wrangler secret put PROXYIP
+# 粘: https://gist.githubusercontent.com/<user>/<GIST_ID>/raw/proxyip.json
+```
+
 - 指定 `SOCKS5` 案例
    ```url
    /socks5=user:password@127.0.0.1:1080

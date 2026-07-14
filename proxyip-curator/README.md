@@ -20,6 +20,7 @@ Alpine 3.20 + curl + jq + bash,~15MB。
 | `PROBE_TIMEOUT` | | 单次探测超时秒,默认 12 |
 | `PROBE_CONCURRENCY` | | 并发,默认 20 |
 | `INTERVAL_SEC` | | 循环间隔秒,默认 1800 (30min)。本地 15h × 86 IP 稳定性测试:30min 内累计新失败 <2%,6h 会累计到 ~6%。加密可选 900(15min,~<1%)或 3600(1h,~3%)。 |
+| `PROXY_PREFIX` | | 反代域名前缀 (如 `https://proxy.example.com/`), 设置后所有源 URL 自动经反代拉取。用于突破源站对 GH Actions 出口 IP 的封禁。 |
 
 ## 本地构建(orbstack,用清华镜像)
 

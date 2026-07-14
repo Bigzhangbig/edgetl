@@ -38,3 +38,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 log/result.csv
+
+# 本地私人笔记 / 配置, 不同步到仓库
+quantumult x.md
+执行记录.md
