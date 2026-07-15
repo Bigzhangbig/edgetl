@@ -165,8 +165,9 @@ kept=$(jq 'length' "$merged_json")
 log "merged good: $kept"
 
 # 5. Truncate + upload
+# ponytail: 单条 compact, 数组换行; gist 里可读又不臃肿
 truncated=$(jq --argjson n "$MAX_KEEP" '.[:$n]' "$merged_json")
-content=$(echo "$truncated" | jq -c .)
+content=$(echo "$truncated" | jq -r 'map(tojson) | "[\n  " + join(",\n  ") + "\n]"')
 
 if [ "$kept" -eq 0 ]; then
   log "WARN: 0 good proxies. keeping gist unchanged to avoid wiping."
