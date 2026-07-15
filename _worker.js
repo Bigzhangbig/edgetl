@@ -48,7 +48,7 @@ export default {
 		if (有效PROXYIP) {
 			const proxyIPs = await 获取PROXYIP池(有效PROXYIP);
 			if (proxyIPs.length > 0) {
-				默认反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)];
+				默认反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)].proxy;
 				默认反代兜底 = false;
 			}
 		};
@@ -407,6 +407,19 @@ export default {
 							const ECHLINK参数 = config_JSON.ECH ? `&ech=${encodeURIComponent((config_JSON.ECHConfig.SNI ? config_JSON.ECHConfig.SNI + '+' : '') + config_JSON.ECHConfig.DNS)}` : '';
 							const isLoonOrSurge = ua.includes('loon') || ua.includes('surge');
 							const { type: 传输协议, 路径字段名, 域名字段名 } = 获取传输协议配置(config_JSON);
+							// ponytail: 按 IATA 建同区 proxyIP 索引, 订阅节点按备注 [IATA] 稳定挑同区 (curator gist 提供 colo)
+							const IATA索引 = {};
+							if (有效PROXYIP) {
+								const 反代池结构化 = await 获取PROXYIP池(有效PROXYIP); // 5min 缓存, 几乎都 cache hit
+								for (const 项 of 反代池结构化) {
+									const key = 项.colo || '';
+									if (!key) continue; // 无 colo 的老格式/纯 IP 不进索引, 只走原字符串包含兜底
+									(IATA索引[key] ||= []).push(项.proxy);
+								}
+								for (const key of Object.keys(IATA索引)) IATA索引[key].sort(); // 排序保证 hash 稳定
+							}
+							// 稳定 hash: djb2 变种, 输出无符号 32-bit
+							const 稳定Hash = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h; };
 							订阅内容 = 其他节点LINK + 完整优选IP.map(原始地址 => {
 								// 统一正则: 匹配 域名/IPv4/IPv6地址 + 可选端口 + 可选备注
 								// 示例:
@@ -440,9 +453,27 @@ export default {
 									} catch (error) {
 										console.warn(`[订阅内容] 链式代理解析失败，已忽略该指令: ${链式代理匹配[0]} (${error && error.message ? error.message : error})`);
 									}
-								} else if (反代IP池.length > 0) {
-									const 匹配到的反代IP = 反代IP池.find(p => p.includes(节点地址));
-									if (匹配到的反代IP) 完整节点路径 = (`${config_JSON.PATH}/proxyip=${匹配到的反代IP}`).replace(/\/\//g, '/') + (config_JSON.启用0RTT ? '?ed=2560' : '');
+								} else {
+									// ponytail: 优先按备注 [IATA] 挑同区; 次选优选 API proxyip=true 池; 都无则不加 proxyip 走运行时兜底
+									// 用 机场三字码地区映射 交叉验证, 避免 [CFV]/[AKM] 类 3 位 API 备注名假匹配
+									const IATA匹配 = 节点备注.match(/\[([A-Z]{3})\]/);
+									const 有效IATA = IATA匹配 && 机场三字码地区映射[IATA匹配[1]] ? IATA匹配[1] : null;
+									let 挑到的proxyIP = null, IATA有匹配但池空 = false;
+									if (有效IATA) {
+										const 候选 = IATA索引[有效IATA];
+										if (候选 && 候选.length > 0) {
+											挑到的proxyIP = 候选[稳定Hash(节点地址) % 候选.length];
+										} else {
+											IATA有匹配但池空 = true; // 保护"同区"约束, skip 而非乱挑
+										}
+									}
+									if (!挑到的proxyIP && !IATA有匹配但池空 && 反代IP池.length > 0) {
+										const 匹配到的反代IP = 反代IP池.find(p => p.includes(节点地址));
+										if (匹配到的反代IP) 挑到的proxyIP = 匹配到的反代IP;
+									}
+									if (挑到的proxyIP) {
+										完整节点路径 = (`${config_JSON.PATH}/proxyip=${挑到的proxyIP}`).replace(/\/\//g, '/') + (config_JSON.启用0RTT ? '?ed=2560' : '');
+									}
 								}
 								if (isLoonOrSurge) 完整节点路径 = 完整节点路径.replace(/,/g, '%2C');
 
@@ -5353,23 +5384,33 @@ async function 获取PROXYIP池(PROXYIP值) {
 	let 池 = [];
 	try {
 		if (/^https?:\/\//i.test(PROXYIP值.trim())) {
-			const res = await fetch(PROXYIP值.trim(), { cf: { cacheTtl: 60 } });
+			const res = await fetch(PROXYIP值.trim(), { cf: { cacheTtl: 60 }, signal: AbortSignal.timeout(3000) });
 			if (res.ok) {
 				const 文本 = await res.text();
 				try {
 					const 解析 = JSON.parse(文本);
-					if (Array.isArray(解析)) 池 = 解析.map(x => (typeof x === 'string') ? x : (x && x.proxy) ? x.proxy : '').filter(Boolean);
+					if (Array.isArray(解析)) {
+						池 = 解析.map(x => {
+							if (typeof x === 'string') return { proxy: x.split('#')[0].trim(), colo: '', v4: false, v6: false };
+							if (x && x.proxy) return {
+								proxy: String(x.proxy).split('#')[0].trim(),
+								colo: String(x.colo || '').trim().toUpperCase(),
+								v4: !!x.v4,
+								v6: !!x.v6,
+							};
+							return null;
+						}).filter(x => x && x.proxy);
+					}
 				} catch {
 					const 首字 = 文本.trim().charAt(0);
 					if (首字 === '[' || 首字 === '{') 池 = [];
-					else 池 = await 整理成数组(文本);
+					else 池 = (await 整理成数组(文本)).map(s => ({ proxy: String(s).split('#')[0].trim(), colo: '', v4: false, v6: false })).filter(x => x.proxy);
 				}
 			}
 		} else {
-			池 = await 整理成数组(PROXYIP值);
+			池 = (await 整理成数组(PROXYIP值)).map(s => ({ proxy: String(s).split('#')[0].trim(), colo: '', v4: false, v6: false })).filter(x => x.proxy);
 		}
 	} catch { 池 = []; }
-	池 = 池.map(s => String(s).split('#')[0].trim()).filter(Boolean);
 	if (池.length > 0) { 缓存PROXYIP池 = 池; 缓存PROXYIP池时间戳 = 当前时间; 缓存PROXYIP池键 = PROXYIP值; }
 	return 池;
 }
@@ -5664,8 +5705,10 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 						const cols = line.split(',').map(c => c.trim());
 						if (tlsIdx !== -1 && cols[tlsIdx]?.toLowerCase() !== 'true') return;
 						const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
+						const 原始IATA = String(cols[headers.indexOf('数据中心')] || '').trim().toUpperCase();
 						const 备注文本 = 格式化机场三字码地区(cols[remarkIdx]);
-						const ipItem = `${wrappedIP}:${cols[portIdx]}#${备注文本}`;
+						const IATA后缀 = /^[A-Z]{3}$/.test(原始IATA) && 机场三字码地区映射[原始IATA] ? ` [${原始IATA}]` : '';
+						const ipItem = `${wrappedIP}:${cols[portIdx]}#${备注文本}${IATA后缀}`;
 						// 处理第一个数组 - 优选IP
 						if (API备注名) {
 							const 处理后IP = `${ipItem} [${API备注名}]`;
@@ -5687,10 +5730,12 @@ async function 请求优选API(urls, 默认端口 = '443', 超时时间 = 3000) 
 					dataLines.forEach(line => {
 						const cols = line.split(',').map(c => c.trim());
 						const wrappedIP = IPV6_PATTERN.test(cols[ipIdx]) ? `[${cols[ipIdx]}]` : cols[ipIdx];
+						const 原始IATA = coloIdx > -1 ? String(cols[coloIdx] || '').trim().toUpperCase() : '';
 						const 地区备注 = coloIdx > -1 ? 格式化机场三字码地区(cols[coloIdx]) : '';
+						const IATA后缀 = /^[A-Z]{3}$/.test(原始IATA) && 机场三字码地区映射[原始IATA] ? ` [${原始IATA}]` : '';
 						const 速度备注 = 地区备注
-							? `${地区备注} ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`
-							: `CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s`;
+							? `${地区备注} ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s${IATA后缀}`
+							: `CF优选 ${cols[delayIdx]}ms ${cols[speedIdx]}MB/s${IATA后缀}`;
 						const ipItem = `${wrappedIP}:${port}#${速度备注}`;
 						// 处理第一个数组 - 优选IP
 						if (API备注名) {
