@@ -5,7 +5,6 @@ set -euo pipefail
 : "${GIST_TOKEN:?GIST_TOKEN required}"
 : "${GIST_ID:?GIST_ID required}"
 GIST_FILENAME="${GIST_FILENAME:-proxyip.json}"
-CHECKER_API="${CHECKER_API:-https://api.090227.xyz/check}"
 SOURCES="${SOURCES:-https://zip.cm.edu.kg/all.json}"
 REGION_FILTER="${REGION_FILTER:-}"
 MAX_KEEP="${MAX_KEEP:-200}"
@@ -21,19 +20,42 @@ log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >&2; }
 # stdin format: ip:port (one per line)
 # stdout tsv:   proxy \t success \t v4 \t v6 \t responseTime \t colo
 probe_one() {
-  local proxy=$1 resp
-  resp=$(curl -sS --max-time "$PROBE_TIMEOUT" "${CHECKER_API}?proxyip=${proxy}" 2>/dev/null)
-  if [ -z "$resp" ]; then
-    printf '%s\tTIMEOUT\t\t\t\t\n' "$proxy"
-    return
+  local proxy=$1
+  # 拆 proxy 成 ip:port; IPv6 是 [::1]:443, 用 rev+cut 提最后一段做 port
+  local port ip
+  port="${proxy##*:}"
+  ip="${proxy%:*}"
+  # v4/v6 字面量判断: 含 [ 或多 : 视为 v6
+  local is_v6=false
+  if [[ "$ip" == \[* ]]; then
+    is_v6=true
+    ip="${ip#[}"; ip="${ip%]}"
   fi
-  # tolerate malformed JSON
-  echo "$resp" | jq -r --arg p "$proxy" \
-    '[$p, (.success|tostring), (.supports_ipv4|tostring), (.supports_ipv6|tostring), (.responseTime|tostring), (.colo//"")] | @tsv' \
-    2>/dev/null || printf '%s\tBADJSON\t\t\t\t\n' "$proxy"
+  # curl --resolve: v6 IP 需要单独裸写 (无方括号)
+  local trace http_code wall_ms colo
+  trace=$(curl -k -sS --connect-timeout 5 --max-time "$PROBE_TIMEOUT" \
+    -w '\nHTTP=%{http_code}\nWALL=%{time_total}\n' \
+    --resolve "speed.cloudflare.com:${port}:${ip}" \
+    "https://speed.cloudflare.com:${port}/cdn-cgi/trace" 2>/dev/null) || {
+    printf '%s\tfalse\t\t\t\t\n' "$proxy"
+    return
+  }
+  http_code=$(printf '%s' "$trace" | awk -F'=' '/^HTTP=/{print $2}')
+  wall_ms=$(printf '%s' "$trace" | awk -F'=' '/^WALL=/{print int($2*1000)}')
+  colo=$(printf '%s' "$trace" | awk -F'=' '/^colo=/{print $2}')
+  if [ "$http_code" = "200" ] && [ -n "$colo" ]; then
+    # ponytail: v4/v6 靠 IP 字面量判断, 单侧填 true; 探测方向单一, 另一侧填 false 简化
+    if $is_v6; then
+      printf '%s\ttrue\tfalse\ttrue\t%s\t%s\n' "$proxy" "$wall_ms" "$colo"
+    else
+      printf '%s\ttrue\ttrue\tfalse\t%s\t%s\n' "$proxy" "$wall_ms" "$colo"
+    fi
+  else
+    printf '%s\tfalse\t\t\t\t\n' "$proxy"
+  fi
 }
 export -f probe_one
-export CHECKER_API PROBE_TIMEOUT
+export PROBE_TIMEOUT
 
 # ---------- probe list -> tsv ----------
 probe_list() {
@@ -182,6 +204,11 @@ fi
         colo: (.[6] // .[5] // "")
       })
     | unique_by(.proxy)
+    # ponytail: per-IATA top-8 by ms (Runner→IP wall time). 27 IATA 全覆盖, top 200 均衡而非"离 checker 近"独霸
+    # sort_by(.ms) 而非 sort_by(.colo,.ms), 避免后续 .[:MAX_KEEP] 按字母序砍掉 Y/Z 开头 IATA
+    | group_by(.colo)
+    | map(sort_by(.ms // 99999) | .[0:8])
+    | flatten
     | sort_by(.ms // 99999)
   ' > "$merged_json"
 
