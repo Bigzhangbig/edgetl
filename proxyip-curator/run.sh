@@ -97,23 +97,26 @@ fetch_sources() {
            elif .ip then "\(.ip):443"
            else empty end) as $addr
         | ($addr | select(. != null and . != "")) as $addr
-        | (.tag // .country // .region // .meta?.country? // .meta?.colo?.iata? // "") as $tag
-        | if ($tag|length)>0 then "\($addr)#\($tag)" else $addr end
+        # ponytail: 输出 ip:port#COUNTRY#IATA, 大写规范化, 后续 map 拆两列
+        | ((.meta?.country? // .country // "") | ascii_upcase) as $country
+        | ((.meta?.colo?.iata? // .tag // .region // "") | ascii_upcase) as $iata
+        | "\($addr)#\($country)#\($iata)"
       ' 2>/dev/null >> "$out" || true
     else
       # plain text, keep ip:port#tag or ip:port
+      # ponytail: plain text 源不带 country/iata 字段, REGION_FILTER 只对 JSON 源生效; gist 里 colo 走 checker fallback
       echo "$raw" | grep -E '^[0-9a-fA-F.:\[\]]+:[0-9]+' >> "$out" || true
     fi
   done
-  # normalize + optional region filter
+  # normalize + optional region filter (匹配 country 列, 大小写不敏感)
   if [ -n "$REGION_FILTER" ]; then
     local pat
-    pat=$(echo "$REGION_FILTER" | sed 's/,/|/g')
-    grep -E "#(${pat})" "$out" > "${out}.f" || true
+    pat=$(echo "$REGION_FILTER" | tr ',' '|' | tr '[:lower:]' '[:upper:]')
+    grep -E "^[^#]+#(${pat})#" "$out" > "${out}.f" || true
     mv "${out}.f" "$out"
   fi
-  # strip #TAG for probing; keep tag file alongside
-  awk -F'#' '{print $1"\t"$2}' "$out" | sort -u -k1,1 > "${out}.map"
+  # strip #COUNTRY#IATA for probing; keep 3-col map alongside (proxy, country, iata)
+  awk -F'#' '{print $1"\t"$2"\t"$3}' "$out" | sort -u -k1,1 > "${out}.map"
   cut -f1 "${out}.map" > "$out"
   log "sources yielded $(wc -l < "$out") candidates"
 }
@@ -149,14 +152,35 @@ new_tsv="$WORK/new.tsv"
 
 # 4. Merge kept (existing that still pass) + new that pass
 merged_json="$WORK/merged.json"
+
+# ponytail: 构建 proxy → IATA 映射 (仅新 IP 有此映射, 从 fetch_sources 生成的 map)
+# 若 REGION_FILTER 走过, 用过滤后的 map (${new_txt}.map); 否则同名
+new_map="${new_txt}.map"
+[ -f "$new_map" ] || : > "$new_map"
+
+# retest 分支: 保留原 gist 的 colo (通过 existing.txt 的 colo 索引)
+retest_map="$WORK/retest.map"
+: > "$retest_map"
+if echo "$cur_json" | jq -e 'type=="array" and length>0' >/dev/null 2>&1; then
+  echo "$cur_json" | jq -r '.[] | "\(.proxy)\t\(.colo // "")"' > "$retest_map"
+fi
+
 {
-  # existing that survived retest
-  awk -F'\t' '$2=="true"' "$retest_tsv"
-  # new that pass
-  awk -F'\t' '$2=="true"' "$new_tsv"
+  # existing 存活: 保留原 gist colo (通过 retest_map lookup, 无则空 → 走 fallback .[5])
+  awk -F'\t' 'NR==FNR{colo[$1]=$2; next} $2=="true"{print $0"\t"(colo[$1]!=""?colo[$1]:$6)}' \
+    "$retest_map" "$retest_tsv"
+  # new 存活: 用源 IATA 覆盖 checker colo (通过 new_map lookup, 第 3 列是 IATA)
+  awk -F'\t' 'NR==FNR{iata[$1]=$3; next} $2=="true"{print $0"\t"(iata[$1]!=""?iata[$1]:$6)}' \
+    "$new_map" "$new_tsv"
 } | jq -Rs '
     split("\n") | map(select(length>0)) | map(split("\t"))
-    | map({proxy: .[0], v4: (.[2]=="true"), v6: (.[3]=="true"), ms: (.[4]|tonumber? // null), colo: .[5]})
+    | map({
+        proxy: .[0],
+        v4: (.[2]=="true"),
+        v6: (.[3]=="true"),
+        ms: (.[4]|tonumber? // null),
+        colo: (.[6] // .[5] // "")
+      })
     | unique_by(.proxy)
     | sort_by(.ms // 99999)
   ' > "$merged_json"
