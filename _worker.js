@@ -5227,7 +5227,8 @@ async function 读取config_JSON(env, hostname, userID, UA = "Mozilla/5.0", 重�
 
 	let 路径反代参数 = '';
 	if (代理配置 && config_JSON.反代.SOCKS5.账号) 路径反代参数 = (config_JSON.反代.SOCKS5.全局 ? 代理配置.全局 : 代理配置.标准).replace(占位符, config_JSON.反代.SOCKS5.账号);
-	else if (config_JSON.反代[_p] !== 'auto') 路径反代参数 = config_JSON.反代.路径模板[_p].replace(占位符, config_JSON.反代[_p]);
+	// ponytail: PROXYIP 若是 URL/含路径/含空格 (指向池), 不能当 IP 拼进 path 模板; 视为 auto, 让订阅生成时按 IATA 挑
+	else if (config_JSON.反代[_p] !== 'auto' && !/^https?:\/\//i.test(config_JSON.反代[_p]) && !config_JSON.反代[_p].includes('/')) 路径反代参数 = config_JSON.反代.路径模板[_p].replace(占位符, config_JSON.反代[_p]);
 
 	let 反代查询参数 = '';
 	if (路径反代参数.includes('?')) {
