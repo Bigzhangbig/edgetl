@@ -408,15 +408,19 @@ export default {
 							const isLoonOrSurge = ua.includes('loon') || ua.includes('surge');
 							const { type: 传输协议, 路径字段名, 域名字段名 } = 获取传输协议配置(config_JSON);
 							// ponytail: 按 IATA 建同区 proxyIP 索引, 订阅节点按备注 [IATA] 稳定挑同区 (curator gist 提供 colo)
+							// v4 优先: 存 {proxy, v4} 让下游按 v4 优先挑 (客户端出口无 v6 时不会踩坑)
 							const IATA索引 = {};
 							if (有效PROXYIP) {
 								const 反代池结构化 = await 获取PROXYIP池(有效PROXYIP); // 5min 缓存, 几乎都 cache hit
 								for (const 项 of 反代池结构化) {
 									const key = 项.colo || '';
 									if (!key) continue; // 无 colo 的老格式/纯 IP 不进索引, 只走原字符串包含兜底
-									(IATA索引[key] ||= []).push(项.proxy);
+									(IATA索引[key] ||= []).push({ proxy: 项.proxy, v4: !!项.v4 });
 								}
-								for (const key of Object.keys(IATA索引)) IATA索引[key].sort(); // 排序保证 hash 稳定
+								// 排序: v4 优先 (v4=true 排前), 组内 proxy 字典序保证 hash 稳定
+								for (const key of Object.keys(IATA索引)) {
+									IATA索引[key].sort((a, b) => (b.v4 - a.v4) || a.proxy.localeCompare(b.proxy));
+								}
 							}
 							// 稳定 hash: djb2 变种, 输出无符号 32-bit
 							const 稳定Hash = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; return h; };
@@ -460,9 +464,12 @@ export default {
 									const 有效IATA = IATA匹配 && 机场三字码地区映射[IATA匹配[1]] ? IATA匹配[1] : null;
 									let 挑到的proxyIP = null, IATA有匹配但池空 = false;
 									if (有效IATA) {
-										const 候选 = IATA索引[有效IATA];
-										if (候选 && 候选.length > 0) {
-											挑到的proxyIP = 候选[稳定Hash(节点地址) % 候选.length];
+										const 全部候选 = IATA索引[有效IATA];
+										if (全部候选 && 全部候选.length > 0) {
+											// v4 优先: 有 v4 就只在 v4 子集里 hash 挑; 全 v6 才用整个池
+											const v4候选 = 全部候选.filter(p => p.v4);
+											const 候选 = v4候选.length > 0 ? v4候选 : 全部候选;
+											挑到的proxyIP = 候选[稳定Hash(节点地址) % 候选.length].proxy;
 										} else {
 											IATA有匹配但池空 = true; // 保护"同区"约束, skip 而非乱挑
 										}
