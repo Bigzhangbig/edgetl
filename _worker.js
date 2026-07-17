@@ -5382,9 +5382,22 @@ async function 获取PROXYIP池(PROXYIP值) {
 	const 当前时间 = Date.now();
 	if (缓存PROXYIP池 && 缓存PROXYIP池键 === PROXYIP值 && (当前时间 - 缓存PROXYIP池时间戳) < 缓存TTL秒 * 1000) return 缓存PROXYIP池;
 	let 池 = [];
+	// ponytail: admin UI 会剥 https:// 前缀, 但值形如 "gist.githubusercontent.com/xxx/raw/yyy.json"
+	// 用启发式判断: 含 `/` 路径 + 域名结构 (含 `.`) + 无 IP:PORT 特征 → 自动补 https://
+	const 规范化值 = (v => {
+		const s = String(v || '').trim();
+		if (!s) return s;
+		if (/^https?:\/\//i.test(s)) return s;
+		// 明显是 IP:PORT (v4/v6) 或 域名:PORT (无路径): 不加前缀
+		if (/^[\[\d]/.test(s) && !s.includes('/')) return s;
+		if (/^[\w.-]+:\d+(,|$)/.test(s) && !s.includes('/')) return s;
+		// 含 `/` 路径且含 `.` 域名部分: 视为 URL, 补 https://
+		if (s.includes('/') && s.includes('.') && !/\s/.test(s.split(',')[0])) return `https://${s}`;
+		return s;
+	})(PROXYIP值);
 	try {
-		if (/^https?:\/\//i.test(PROXYIP值.trim())) {
-			const res = await fetch(PROXYIP值.trim(), { cf: { cacheTtl: 60 }, signal: AbortSignal.timeout(3000) });
+		if (/^https?:\/\//i.test(规范化值)) {
+			const res = await fetch(规范化值, { cf: { cacheTtl: 60 }, signal: AbortSignal.timeout(3000) });
 			if (res.ok) {
 				const 文本 = await res.text();
 				try {
@@ -5408,7 +5421,7 @@ async function 获取PROXYIP池(PROXYIP值) {
 				}
 			}
 		} else {
-			池 = (await 整理成数组(PROXYIP值)).map(s => ({ proxy: String(s).split('#')[0].trim(), colo: '', v4: false, v6: false })).filter(x => x.proxy);
+			池 = (await 整理成数组(规范化值)).map(s => ({ proxy: String(s).split('#')[0].trim(), colo: '', v4: false, v6: false })).filter(x => x.proxy);
 		}
 	} catch { 池 = []; }
 	if (池.length > 0) { 缓存PROXYIP池 = 池; 缓存PROXYIP池时间戳 = 当前时间; 缓存PROXYIP池键 = PROXYIP值; }
