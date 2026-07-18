@@ -408,18 +408,22 @@ export default {
 							const isLoonOrSurge = ua.includes('loon') || ua.includes('surge');
 							const { type: 传输协议, 路径字段名, 域名字段名 } = 获取传输协议配置(config_JSON);
 							// ponytail: 按 IATA 建同区 proxyIP 索引, 订阅节点按备注 [IATA] 稳定挑同区 (curator gist 提供 colo)
-							// v4 优先: 存 {proxy, v4} 让下游按 v4 优先挑 (客户端出口无 v6 时不会踩坑)
+							// egress=v4 优先 > v4 入方向优先: 双栈 VPS 默认走 v6 出网, 目标网站看到 v6, 影响风控
 							const IATA索引 = {};
 							if (有效PROXYIP) {
 								const 反代池结构化 = await 获取PROXYIP池(有效PROXYIP); // 5min 缓存, 几乎都 cache hit
 								for (const 项 of 反代池结构化) {
 									const key = 项.colo || '';
 									if (!key) continue; // 无 colo 的老格式/纯 IP 不进索引, 只走原字符串包含兜底
-									(IATA索引[key] ||= []).push({ proxy: 项.proxy, v4: !!项.v4 });
+									(IATA索引[key] ||= []).push({ proxy: 项.proxy, v4: !!项.v4, egressV4: 项.egress === 'v4' });
 								}
-								// 排序: v4 优先 (v4=true 排前), 组内 proxy 字典序保证 hash 稳定
+								// 排序优先级: 1) egress=v4 (出网 v4); 2) v4 入方向; 3) proxy 字典序 (hash 稳定)
 								for (const key of Object.keys(IATA索引)) {
-									IATA索引[key].sort((a, b) => (b.v4 - a.v4) || a.proxy.localeCompare(b.proxy));
+									IATA索引[key].sort((a, b) =>
+										(b.egressV4 - a.egressV4) ||
+										(b.v4 - a.v4) ||
+										a.proxy.localeCompare(b.proxy)
+									);
 								}
 							}
 							// 稳定 hash: djb2 变种, 输出无符号 32-bit
@@ -466,9 +470,10 @@ export default {
 									if (有效IATA) {
 										const 全部候选 = IATA索引[有效IATA];
 										if (全部候选 && 全部候选.length > 0) {
-											// v4 优先: 有 v4 就只在 v4 子集里 hash 挑; 全 v6 才用整个池
+											// 三层优先: 1) egressV4 (出网 v4) 子集; 2) v4 入方向子集; 3) 整池
+											const egressV4候选 = 全部候选.filter(p => p.egressV4);
 											const v4候选 = 全部候选.filter(p => p.v4);
-											const 候选 = v4候选.length > 0 ? v4候选 : 全部候选;
+											const 候选 = egressV4候选.length > 0 ? egressV4候选 : (v4候选.length > 0 ? v4候选 : 全部候选);
 											挑到的proxyIP = 候选[稳定Hash(节点地址) % 候选.length].proxy;
 										} else {
 											IATA有匹配但池空 = true; // 保护"同区"约束, skip 而非乱挑
@@ -5412,12 +5417,13 @@ async function 获取PROXYIP池(PROXYIP值) {
 					const 解析 = JSON.parse(文本);
 					if (Array.isArray(解析)) {
 						池 = 解析.map(x => {
-							if (typeof x === 'string') return { proxy: x.split('#')[0].trim(), colo: '', v4: false, v6: false };
+							if (typeof x === 'string') return { proxy: x.split('#')[0].trim(), colo: '', v4: false, v6: false, egress: '' };
 							if (x && x.proxy) return {
 								proxy: String(x.proxy).split('#')[0].trim(),
 								colo: String(x.colo || '').trim().toUpperCase(),
 								v4: !!x.v4,
 								v6: !!x.v6,
+								egress: String(x.egress || '').trim().toLowerCase(),
 							};
 							return null;
 						}).filter(x => x && x.proxy);
@@ -5425,11 +5431,11 @@ async function 获取PROXYIP池(PROXYIP值) {
 				} catch {
 					const 首字 = 文本.trim().charAt(0);
 					if (首字 === '[' || 首字 === '{') 池 = [];
-					else 池 = (await 整理成数组(文本)).map(s => ({ proxy: String(s).split('#')[0].trim(), colo: '', v4: false, v6: false })).filter(x => x.proxy);
+					else 池 = (await 整理成数组(文本)).map(s => ({ proxy: String(s).split('#')[0].trim(), colo: '', v4: false, v6: false, egress: '' })).filter(x => x.proxy);
 				}
 			}
 		} else {
-			池 = (await 整理成数组(规范化值)).map(s => ({ proxy: String(s).split('#')[0].trim(), colo: '', v4: false, v6: false })).filter(x => x.proxy);
+			池 = (await 整理成数组(规范化值)).map(s => ({ proxy: String(s).split('#')[0].trim(), colo: '', v4: false, v6: false, egress: '' })).filter(x => x.proxy);
 		}
 	} catch { 池 = []; }
 	if (池.length > 0) { 缓存PROXYIP池 = 池; 缓存PROXYIP池时间戳 = 当前时间; 缓存PROXYIP池键 = PROXYIP值; }

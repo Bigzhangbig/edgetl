@@ -18,7 +18,7 @@ log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >&2; }
 
 # ---------- probe one proxy ----------
 # stdin format: ip:port (one per line)
-# stdout tsv:   proxy \t success \t v4 \t v6 \t responseTime \t colo
+# stdout tsv:   proxy \t success \t v4 \t v6 \t responseTime \t colo \t egress
 probe_one() {
   local proxy=$1
   # 拆 proxy 成 ip:port; IPv6 是 [::1]:443, 用 rev+cut 提最后一段做 port
@@ -32,26 +32,30 @@ probe_one() {
     ip="${ip#[}"; ip="${ip%]}"
   fi
   # curl --resolve: v6 IP 需要单独裸写 (无方括号)
-  local trace http_code wall_ms colo
+  local trace http_code wall_ms colo egress_ip egress_type
   trace=$(curl -k -sS --connect-timeout 5 --max-time "$PROBE_TIMEOUT" \
     -w '\nHTTP=%{http_code}\nWALL=%{time_total}\n' \
     --resolve "speed.cloudflare.com:${port}:${ip}" \
     "https://speed.cloudflare.com:${port}/cdn-cgi/trace" 2>/dev/null) || {
-    printf '%s\tfalse\t\t\t\t\n' "$proxy"
+    printf '%s\tfalse\t\t\t\t\t\n' "$proxy"
     return
   }
   http_code=$(printf '%s' "$trace" | awk -F'=' '/^HTTP=/{print $2}')
   wall_ms=$(printf '%s' "$trace" | awk -F'=' '/^WALL=/{print int($2*1000)}')
   colo=$(printf '%s' "$trace" | awk -F'=' '/^colo=/{print $2}')
+  # ponytail: 从 trace body 里 ip= 拿 proxyIP 真实出口, 判 v4/v6 (双栈 VPS 默认走 v6, 影响下游选点)
+  egress_ip=$(printf '%s' "$trace" | awk -F'=' '/^ip=/{print $2}')
+  egress_type=v4
+  [[ "$egress_ip" == *:* ]] && egress_type=v6
   if [ "$http_code" = "200" ] && [ -n "$colo" ]; then
     # ponytail: v4/v6 靠 IP 字面量判断, 单侧填 true; 探测方向单一, 另一侧填 false 简化
     if $is_v6; then
-      printf '%s\ttrue\tfalse\ttrue\t%s\t%s\n' "$proxy" "$wall_ms" "$colo"
+      printf '%s\ttrue\tfalse\ttrue\t%s\t%s\t%s\n' "$proxy" "$wall_ms" "$colo" "$egress_type"
     else
-      printf '%s\ttrue\ttrue\tfalse\t%s\t%s\n' "$proxy" "$wall_ms" "$colo"
+      printf '%s\ttrue\ttrue\tfalse\t%s\t%s\t%s\n' "$proxy" "$wall_ms" "$colo" "$egress_type"
     fi
   else
-    printf '%s\tfalse\t\t\t\t\n' "$proxy"
+    printf '%s\tfalse\t\t\t\t\t\n' "$proxy"
   fi
 }
 export -f probe_one
@@ -180,19 +184,30 @@ merged_json="$WORK/merged.json"
 new_map="${new_txt}.map"
 [ -f "$new_map" ] || : > "$new_map"
 
-# retest 分支: 保留原 gist 的 colo (通过 existing.txt 的 colo 索引)
+# retest 分支: 保留原 gist 的 colo + egress (通过 existing.txt 索引)
 retest_map="$WORK/retest.map"
 : > "$retest_map"
 if echo "$cur_json" | jq -e 'type=="array" and length>0' >/dev/null 2>&1; then
-  echo "$cur_json" | jq -r '.[] | "\(.proxy)\t\(.colo // "")"' > "$retest_map"
+  echo "$cur_json" | jq -r '.[] | "\(.proxy)\t\(.colo // "")\t\(.egress // "")"' > "$retest_map"
 fi
 
 {
-  # existing 存活: 保留原 gist colo (通过 retest_map lookup, 无则空 → 走 fallback .[5])
-  awk -F'\t' 'NR==FNR{colo[$1]=$2; next} $2=="true"{print $0"\t"(colo[$1]!=""?colo[$1]:$6)}' \
+  # existing 存活: 保留原 gist colo/egress (通过 retest_map lookup, 无则用新探测 .[5]/.[6])
+  # 输出追加两列: final_colo (index 7), final_egress (index 8)
+  awk -F'\t' 'NR==FNR{colo[$1]=$2; egress[$1]=$3; next}
+              $2=="true"{
+                c=(colo[$1]!=""?colo[$1]:$6);
+                e=(egress[$1]!=""?egress[$1]:$7);
+                print $0"\t"c"\t"e
+              }' \
     "$retest_map" "$retest_tsv"
-  # new 存活: 用源 IATA 覆盖 checker colo (通过 new_map lookup, 第 3 列是 IATA)
-  awk -F'\t' 'NR==FNR{iata[$1]=$3; next} $2=="true"{print $0"\t"(iata[$1]!=""?iata[$1]:$6)}' \
+  # new 存活: 用源 IATA 覆盖 checker colo; egress 用新探测值
+  # 输出追加两列: final_colo (源 IATA), final_egress (新探测)
+  awk -F'\t' 'NR==FNR{iata[$1]=$3; next}
+              $2=="true"{
+                c=(iata[$1]!=""?iata[$1]:$6);
+                print $0"\t"c"\t"$7
+              }' \
     "$new_map" "$new_tsv"
 } | jq -Rs '
     split("\n") | map(select(length>0)) | map(split("\t"))
@@ -201,7 +216,8 @@ fi
         v4: (.[2]=="true"),
         v6: (.[3]=="true"),
         ms: (.[4]|tonumber? // null),
-        colo: (.[6] // .[5] // "")
+        colo: (.[7] // .[5] // ""),
+        egress: (.[8] // .[6] // "")
       })
     | unique_by(.proxy)
     # ponytail: per-IATA top-8 by ms (Runner→IP wall time). 27 IATA 全覆盖, top 200 均衡而非"离 checker 近"独霸
