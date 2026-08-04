@@ -8,6 +8,7 @@ GIST_FILENAME="${GIST_FILENAME:-proxyip.json}"
 SOURCES="${SOURCES:-https://zip.cm.edu.kg/all.json}"
 REGION_FILTER="${REGION_FILTER:-}"
 MAX_KEEP="${MAX_KEEP:-200}"
+MAX_PROBE_CANDIDATES="${MAX_PROBE_CANDIDATES:-600}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-12}"
 PROBE_CONCURRENCY="${PROBE_CONCURRENCY:-20}"
 
@@ -173,6 +174,10 @@ fetch_sources() {
   # strip #COUNTRY#IATA for probing; keep 3-col map alongside (proxy, country, iata)
   awk -F'#' '{print $1"\t"$2"\t"$3}' "$out" | sort -u -k1,1 > "${out}.map"
   cut -f1 "${out}.map" > "$out"
+  # ponytail: 截断候选数避免 probe 超时(all.json 10725 全 probe 超 workflow 15min timeout)
+  if [ "$(wc -l < "$out")" -gt "$MAX_PROBE_CANDIDATES" ]; then
+    shuf -n "$MAX_PROBE_CANDIDATES" "$out" > "${out}.shuf" && mv "${out}.shuf" "$out"
+  fi
   log "sources yielded $(wc -l < "$out") candidates"
 }
 
