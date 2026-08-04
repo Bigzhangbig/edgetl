@@ -113,10 +113,8 @@ fetch_sources() {
       log "pp_host: len=${#pp_host} dot=$([[ "$pp_host" == *.* ]] && echo y || echo n)"
       target_url="${pp%/}/${u}"
     fi
-    # ponytail: 诊断-打印实际请求 host(不暴露 secret 全文), 确认是否走了反代
+    # ponytail: via_host 仅记录源 host(直连)或占位符(反代),不打印反代域名以免泄露 secret
     local via_host
-    via_host=$(printf '%s' "$target_url" | awk -F/ '{print $3}')
-    log "via host: ${via_host:-?}"
     # ponytail: --compressed 启用 gzip 传输(all.json 9.6MB→~400KB); 浏览器 UA 绕过源站反爬限速; 放宽 speed-time/max-time 应对慢速传输
     local ua='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
     local curl_rc=0
@@ -127,7 +125,7 @@ fetch_sources() {
       log "direct failed (curl_exit=$curl_rc), try via prefix"
       curl_rc=0
       raw=$(curl -fsS --compressed --connect-timeout 8 --speed-time 60 --speed-limit 512 --max-time 180 --retry 3 --retry-all-errors --retry-delay 2 -A "$ua" "$target_url" 2>/dev/null) || curl_rc=$?
-      via_host=$(printf '%s' "$target_url" | awk -F/ '{print $3}')
+      via_host="via-prefix"
     fi
     if [ "$curl_rc" -ne 0 ]; then
       log "fetch failed for $u (host=${via_host:-?}, curl_exit=$curl_rc)"
