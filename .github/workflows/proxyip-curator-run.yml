@@ -28,7 +28,7 @@ jobs:
           GIST_TOKEN:        ${{ secrets.GIST_TOKEN }}
           GIST_ID:           ${{ secrets.GIST_ID }}
           GIST_FILENAME:     ${{ vars.GIST_FILENAME || 'proxyip.json' }}
-          SOURCES:           ${{ vars.SOURCES     || 'https://ipdb.api.030101.xyz/?type=proxy&country=true' }}
+          SOURCES:           ${{ vars.SOURCES     || 'https://zip.cm.edu.kg/all.json' }}
           CHECKER_API:       ${{ vars.CHECKER_API || 'https://api.090227.xyz/check' }}
           REGION_FILTER:     ${{ vars.REGION_FILTER }}
           MAX_KEEP:          ${{ vars.MAX_KEEP    || '200' }}
