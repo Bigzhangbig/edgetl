@@ -105,11 +105,35 @@ fetch_sources() {
     log "fetch: $u"
     local raw
     local target_url="$u"
-    # ponytail: 若配置了反代前缀,把源 URL 拼在前面 (Secret 隐藏,直接暴露到日志)
-    if [ -n "${PROXY_PREFIX:-}" ]; then
-      target_url="${PROXY_PREFIX%/}/${u}"
+    # ponytail: 若配置了反代前缀,校验有效性(须含域名)后拼到源 URL 前;无效则直连,避免畸形 URL
+    local pp="${PROXY_PREFIX:-}"
+    local pp_host=""
+    if [ -n "$pp" ]; then
+      pp_host=$(printf '%s' "$pp" | sed -E 's#^https?://##; s#[:/].*##')
+      log "pp_host: len=${#pp_host} dot=$([[ "$pp_host" == *.* ]] && echo y || echo n)"
+      target_url="${pp%/}/${u}"
     fi
-    raw=$(curl -fsS --connect-timeout 8 --speed-time 30 --speed-limit 1024 --max-time 120 --retry 3 --retry-all-errors --retry-delay 2 -A 'Mozilla/5.0 (compatible; proxyip-curator/1.0)' "$target_url" 2>/dev/null) || { log "fetch failed for $u"; continue; }
+    # ponytail: 诊断-打印实际请求 host(不暴露 secret 全文), 确认是否走了反代
+    local via_host
+    via_host=$(printf '%s' "$target_url" | awk -F/ '{print $3}')
+    log "via host: ${via_host:-?}"
+    # ponytail: --compressed 启用 gzip 传输(all.json 9.6MB→~400KB); 浏览器 UA 绕过源站反爬限速; 放宽 speed-time/max-time 应对慢速传输
+    local ua='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+    local curl_rc=0
+    # ponytail: 先直连原始源(快);失败且配了反代再走反代(反代可能配置错误或回源慢)
+    raw=$(curl -fsS --compressed --connect-timeout 8 --speed-time 60 --speed-limit 512 --max-time 180 --retry 3 --retry-all-errors --retry-delay 2 -A "$ua" "$u" 2>/dev/null) || curl_rc=$?
+    via_host=$(printf '%s' "$u" | awk -F/ '{print $3}')
+    if [ "$curl_rc" -ne 0 ] && [ "$target_url" != "$u" ]; then
+      log "direct failed (curl_exit=$curl_rc), try via prefix"
+      curl_rc=0
+      raw=$(curl -fsS --compressed --connect-timeout 8 --speed-time 60 --speed-limit 512 --max-time 180 --retry 3 --retry-all-errors --retry-delay 2 -A "$ua" "$target_url" 2>/dev/null) || curl_rc=$?
+      via_host=$(printf '%s' "$target_url" | awk -F/ '{print $3}')
+    fi
+    if [ "$curl_rc" -ne 0 ]; then
+      log "fetch failed for $u (host=${via_host:-?}, curl_exit=$curl_rc)"
+      continue
+    fi
+    log "fetched $(printf '%s' "$raw" | wc -c) bytes from ${via_host:-?}"
     # try json first
     if echo "$raw" | jq -e . >/dev/null 2>&1; then
       # common shapes: [{ip,port,tag}], [{proxyip}], {items:[...]}
@@ -129,16 +153,23 @@ fetch_sources() {
         | "\($addr)#\($country)#\($iata)"
       ' 2>/dev/null >> "$out" || true
     else
-      # plain text, keep ip:port#tag or ip:port
-      # ponytail: plain text 源不带 country/iata 字段, REGION_FILTER 只对 JSON 源生效; gist 里 colo 走 checker fallback
-      echo "$raw" | grep -E '^[0-9a-fA-F.:\[\]]+:[0-9]+' >> "$out" || true
+      # ponytail: plain text 支持 ip:port, ip:port#tag, ip, ip#tag (无端口补 :443); 输出 ip:port 或 ip:port#tag#
+      echo "$raw" | awk -F'#' '
+        /^[0-9a-fA-F.:\[\]]+(:[0-9]+)?/ {
+          ip=$1
+          if (ip !~ /:[0-9]+$/) ip=ip":443"
+          if (NF>=2) print ip"#"$2"#"
+          else print ip
+        }
+      ' >> "$out" || true
     fi
   done
   # normalize + optional region filter (匹配 country 列, 大小写不敏感)
   if [ -n "$REGION_FILTER" ]; then
     local pat
     pat=$(echo "$REGION_FILTER" | tr ',' '|' | tr '[:lower:]' '[:upper:]')
-    grep -E "^[^#]+#(${pat})#" "$out" > "${out}.f" || true
+    # ponytail: 保留匹配 region 的行,或无 region 标记的行(plain text 源无国家不过滤)
+    awk -v pat="($pat)" '{ if ($0 !~ /#/) {print; next} c=$0; sub(/^[^#]*#/,"",c); split(c,f,"#"); if (toupper(f[1]) ~ pat) print }' "$out" > "${out}.f" || true
     mv "${out}.f" "$out"
   fi
   # strip #COUNTRY#IATA for probing; keep 3-col map alongside (proxy, country, iata)
