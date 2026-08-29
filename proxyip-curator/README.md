@@ -14,7 +14,8 @@ Alpine 3.20 + curl + jq + bash,~15MB。
 | `GIST_ID` | ✓ | 目标 gist id |
 | `GIST_FILENAME` | | gist 内文件名,默认 `proxyip.json` |
 | `SOURCES` | | 逗号分隔的 IP 列表源 URL,默认 `https://zip.cm.edu.kg/all.json` |
-| `CHECKER_API` | | 探测 API,默认 `https://api.090227.xyz/check` |
+| `CHECKER_API` | | 可选可信探测 API;只有返回 `{"success":true,"egress_ip":"..."}` 才填写 `egress`,默认不配置 |
+| `CHECKER_TIMEOUT` | | 可信探测 API 超时秒数,默认 8 |
 | `REGION_FILTER` | | 仅保留匹配 `#TAG` 的行,如 `JP,US,HK` |
 | `MAX_KEEP` | | 单次保留上限,默认 200 |
 | `PROBE_TIMEOUT` | | 单次探测超时秒,默认 12 |
@@ -59,12 +60,12 @@ docker run -d --name proxyip-curator --restart=unless-stopped \
 ]
 ```
 
-按 `ms` 升序,长度 ≤ `MAX_KEEP`。
+按 `ms` 升序,长度 ≤ `MAX_KEEP`。`egress` 只有可信代理链路检查器明确返回时才有值；直接 `curl --resolve` 的 Cloudflare `ip=` 不会被当作 egress。
 
 ## 流程
 
-1. 拉当前 gist → 复测每条 → 剔除 `success!=true`
-2. 拉 `SOURCES` → 去重 → 排除本轮已测
+1. 拉当前 gist → 过滤非法 IPv4/IPv6 → 复测每条 → 剔除 `success!=true`
+2. 拉 `SOURCES` → 展开 JSON 全部端口 → 严格保留 IPv4 → 按 IATA 分层截断 → 排除本轮已测
 3. 探测新候选
 4. 合并存活的旧条目 + 通过的新条目 → 按延迟排序 → 截断 `MAX_KEEP`
 5. PATCH gist

@@ -29,7 +29,7 @@ jobs:
           GIST_ID:           ${{ secrets.GIST_ID }}
           GIST_FILENAME:     ${{ vars.GIST_FILENAME || 'proxyip.json' }}
           SOURCES:           ${{ vars.SOURCES     || 'https://zip.cm.edu.kg/all.json' }}
-          CHECKER_API:       ${{ vars.CHECKER_API || 'https://api.090227.xyz/check' }}
+          CHECKER_API:       ${{ vars.CHECKER_API }}
           REGION_FILTER:     ${{ vars.REGION_FILTER }}
           MAX_KEEP:          ${{ vars.MAX_KEEP    || '200' }}
           PROBE_TIMEOUT:     ${{ vars.PROBE_TIMEOUT || '12' }}

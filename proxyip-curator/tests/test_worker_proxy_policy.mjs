@@ -14,8 +14,8 @@ const context = {
 };
 vm.runInNewContext(source, context, { filename: workerPath });
 
-const { isStrictIPv4Proxy, selectSafeProxyIPs } = context;
-if (typeof isStrictIPv4Proxy !== 'function' || typeof selectSafeProxyIPs !== 'function') {
+const { isStrictIPv4Proxy, selectSafeProxyIPs, parseProxyAddressPort } = context;
+if (typeof isStrictIPv4Proxy !== 'function' || typeof selectSafeProxyIPs !== 'function' || typeof parseProxyAddressPort !== 'function') {
   throw new Error('worker IPv4 proxy policy helpers are missing');
 }
 
@@ -37,6 +37,22 @@ if (selected.join(',') !== '203.0.113.2:443') {
 const v4Fallback = selectSafeProxyIPs(pool.map(item => ({ ...item, egress: 'unknown' }))).map(item => item.proxy);
 if (v4Fallback.join(',') !== '203.0.113.1:443,203.0.113.2:443') {
   throw new Error(`literal IPv4 fallback should exclude IPv6, got ${v4Fallback.join(',')}`);
+}
+
+if (selectSafeProxyIPs([{ proxy: '[2001:db8::2]:443', egress: 'v4' }]).length !== 0) {
+  throw new Error('an IPv6-only pool must not be selected even with stale egress metadata');
+}
+
+const bracketed = parseProxyAddressPort('[2001:db8::3]:8443');
+if (bracketed[0] !== '[2001:db8::3]' || bracketed[1] !== 8443) {
+  throw new Error(`bracketed IPv6 port boundary is wrong: ${bracketed}`);
+}
+const rawIPv6 = parseProxyAddressPort('2001:db8::3');
+if (rawIPv6[0] !== '2001:db8::3' || rawIPv6[1] !== 443) {
+  throw new Error(`raw IPv6 default port is wrong: ${rawIPv6}`);
+}
+if (parseProxyAddressPort('[2001:db8::3]:99999')[1] !== 0) {
+  throw new Error('out-of-range bracketed port must be rejected');
 }
 
 console.log('PASS: worker proxy policy');
