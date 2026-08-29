@@ -9,6 +9,50 @@ const WS早期数据最大字节 = 8 * 1024, WS早期数据最大头长度 = Mat
 const 上行合包目标字节 = 20 * 1024, 上行队列最大字节 = 16 * 1024 * 1024, 上行队列最大条目 = 4096;
 const 下行Grain包字节 = 32 * 1024, 下行Grain尾部阈值 = 512, 下行Grain低水位字节 = Math.max(4096, 下行Grain尾部阈值 * 12), 下行Grain最大等待轮次 = 4;
 let TCP并发拨号数 = 2, 反代并发拨号数 = 1, 预加载竞速拨号 = false;
+
+function isStrictIPv4Proxy(value) {
+	const raw = String(value ?? '').split('#', 1)[0].trim();
+	const match = raw.match(/^((?:\d{1,3}\.){3}\d{1,3}):(\d{1,5})$/);
+	if (!match) return false;
+	const octets = match[1].split('.');
+	return octets.every(octet => Number(octet) >= 0 && Number(octet) <= 255) && Number(match[2]) >= 1 && Number(match[2]) <= 65535;
+}
+
+function selectSafeProxyIPs(proxyIPs) {
+	const literalV4Pool = Array.isArray(proxyIPs) ? proxyIPs.filter(item => item && isStrictIPv4Proxy(item.proxy)) : [];
+	const egressV4Pool = literalV4Pool.filter(item => item.egress === 'v4');
+	return egressV4Pool.length > 0 ? egressV4Pool : literalV4Pool;
+}
+
+function parseProxyAddressPort(value) {
+	const str = String(value || '').trim();
+	let address = str, port = 443;
+	if (str.startsWith('[')) {
+		const closingIndex = str.indexOf(']');
+		if (closingIndex <= 1) return ['', 0];
+		address = str.slice(0, closingIndex + 1);
+		const suffix = str.slice(closingIndex + 1);
+		if (suffix === '') return [address, port];
+		if (!/^:\d+$/.test(suffix)) return ['', 0];
+		port = Number(suffix.slice(1));
+		return port >= 1 && port <= 65535 ? [address, port] : ['', 0];
+	}
+
+	const colonCount = (str.match(/:/g) || []).length;
+	if (colonCount === 1) {
+		const colonIndex = str.lastIndexOf(':');
+		const portText = str.slice(colonIndex + 1);
+		if (!/^\d+$/.test(portText)) return ['', 0];
+		address = str.slice(0, colonIndex);
+		port = Number(portText);
+		return address && port >= 1 && port <= 65535 ? [address, port] : ['', 0];
+	}
+
+	// Multiple colons are an unbracketed IPv6 literal. It has no safe port
+	// boundary, so keep it as an address and use the default port.
+	return [address, port];
+}
+
 ///////////////////////////////////////////////////////查杀特征码///////////////////////////////////////////////
 const 特征码字典 = [
 	(Proxy.name + "IP").toUpperCase(),
@@ -47,10 +91,11 @@ export default {
 		const 有效PROXYIP = env.PROXYIP || await 从KV读PROXYIP(env);
 		if (有效PROXYIP) {
 			const proxyIPs = await 获取PROXYIP池(有效PROXYIP);
-			if (proxyIPs.length > 0) {
-				默认反代IP = proxyIPs[Math.floor(Math.random() * proxyIPs.length)].proxy;
+			const safeProxyIPs = selectSafeProxyIPs(proxyIPs);
+			if (safeProxyIPs.length > 0) {
+				默认反代IP = safeProxyIPs[Math.floor(Math.random() * safeProxyIPs.length)].proxy;
 				默认反代兜底 = false;
-			}
+			} else if (proxyIPs.length > 0) console.warn('[PROXYIP] family=v4-unavailable, keep built-in fallback');
 		};
 		const 访问IP = request.headers.get('CF-Connecting-IP') || request.headers.get('True-Client-IP') || request.headers.get('X-Real-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('Fly-Client-IP') || request.headers.get('X-Appengine-Remote-Addr') || request.headers.get('X-Cluster-Client-IP') || '未知IP';
 		if (缓存SOCKS5白名单 === null) {
@@ -413,9 +458,10 @@ export default {
 							if (有效PROXYIP) {
 								const 反代池结构化 = await 获取PROXYIP池(有效PROXYIP); // 5min 缓存, 几乎都 cache hit
 								for (const 项 of 反代池结构化) {
+									if (!isStrictIPv4Proxy(项.proxy)) continue;
 									const key = 项.colo || '';
 									if (!key) continue; // 无 colo 的老格式/纯 IP 不进索引, 只走原字符串包含兜底
-									(IATA索引[key] ||= []).push({ proxy: 项.proxy, v4: !!项.v4, egressV4: 项.egress === 'v4' });
+									(IATA索引[key] ||= []).push({ proxy: 项.proxy, v4: true, egressV4: 项.egress === 'v4' });
 								}
 								// 排序优先级: 1) egress=v4 (出网 v4); 2) v4 入方向; 3) proxy 字典序 (hash 稳定)
 								for (const key of Object.keys(IATA索引)) {
@@ -468,20 +514,21 @@ export default {
 									const 有效IATA = IATA匹配 && 机场三字码地区映射[IATA匹配[1]] ? IATA匹配[1] : null;
 									let 挑到的proxyIP = null, IATA有匹配但池空 = false;
 									if (有效IATA) {
-										const 全部候选 = IATA索引[有效IATA];
+										const 全部候选 = (IATA索引[有效IATA] || []).filter(p => isStrictIPv4Proxy(p.proxy));
 										if (全部候选 && 全部候选.length > 0) {
-											// 三层优先: 1) egressV4 (出网 v4) 子集; 2) v4 入方向子集; 3) 整池
+											// 可信 egress=v4 优先；索引本身已经经过字面量 IPv4 防线。
 											const egressV4候选 = 全部候选.filter(p => p.egressV4);
 											const v4候选 = 全部候选.filter(p => p.v4);
 											const 候选 = egressV4候选.length > 0 ? egressV4候选 : (v4候选.length > 0 ? v4候选 : 全部候选);
-											挑到的proxyIP = 候选[稳定Hash(节点地址) % 候选.length].proxy;
+											const selectedProxyIP = 候选[稳定Hash(节点地址) % 候选.length]?.proxy;
+											if (isStrictIPv4Proxy(selectedProxyIP)) 挑到的proxyIP = selectedProxyIP;
 										} else {
 											IATA有匹配但池空 = true; // 保护"同区"约束, skip 而非乱挑
 										}
 									}
 									if (!挑到的proxyIP && !IATA有匹配但池空 && 反代IP池.length > 0) {
 										const 匹配到的反代IP = 反代IP池.find(p => p.includes(节点地址));
-										if (匹配到的反代IP) 挑到的proxyIP = 匹配到的反代IP;
+										if (isStrictIPv4Proxy(匹配到的反代IP)) 挑到的proxyIP = 匹配到的反代IP;
 									}
 									if (挑到的proxyIP) {
 										完整节点路径 = (`${config_JSON.PATH}/proxyip=${挑到的proxyIP}`).replace(/\/\//g, '/') + (config_JSON.启用0RTT ? '?ed=2560' : '');
@@ -6614,17 +6661,7 @@ function sha224(s) {
 async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com', UUID = '00000000-0000-4000-8000-000000000000') {
 	proxyIP = proxyIP.toLowerCase();
 		function 解析地址端口字符串(str) {
-			let 地址 = str, 端口 = 443;
-			if (str.includes(']:')) {
-				const parts = str.split(']:');
-				地址 = parts[0] + ']';
-				端口 = parseInt(parts[1], 10) || 端口;
-			} else if ((str.match(/:/g) || []).length === 1 && !str.startsWith('[')) {
-				const colonIndex = str.lastIndexOf(':');
-				地址 = str.slice(0, colonIndex);
-				端口 = parseInt(str.slice(colonIndex + 1), 10) || 端口;
-			}
-			return [地址, 端口];
+			return parseProxyAddressPort(str);
 		}
 
 		function 解析TXT反代记录(txtData) {
@@ -6642,6 +6679,7 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 		// 遍历数组中的每个IP元素进行处理
 		for (const singleProxyIP of 反代IP数组) {
 			let [地址, 端口] = 解析地址端口字符串(singleProxyIP);
+			if (!地址 || !Number.isInteger(端口) || 端口 < 1 || 端口 > 65535) continue;
 
 			if (singleProxyIP.includes('.tp')) {
 				const tpMatch = singleProxyIP.match(/\.tp(\d+)/);

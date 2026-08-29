@@ -1,0 +1,28 @@
+{
+  "data": [
+    {
+      "ip": "203.0.113.10",
+      "port": [443, 8443],
+      "meta": {"country": "US", "colo": {"iata": "LAX"}}
+    },
+    {
+      "ip": "2001:db8::10",
+      "port": [443],
+      "meta": {"country": "US", "colo": {"iata": "LAX"}}
+    },
+    {
+      "proxyip": "[2001:db8::20]:443",
+      "meta": {"country": "DE", "colo": {"iata": "FRA"}}
+    },
+    {
+      "ip": "198.51.100.20",
+      "port": 443,
+      "meta": {"country": "CA", "colo": {"iata": "YTO"}}
+    },
+    {
+      "ip": "203.0.113.10",
+      "port": [443],
+      "meta": {"country": "US", "colo": {"iata": "LAX"}}
+    }
+  ]
+}

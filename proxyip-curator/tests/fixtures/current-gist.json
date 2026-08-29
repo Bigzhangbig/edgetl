@@ -1,0 +1,5 @@
+[
+  {"proxy":"203.0.113.40:443","v4":true,"v6":false,"ms":120,"colo":"LAX","egress":"v6"},
+  {"proxy":"[2001:db8::40]:443","v4":true,"v6":true,"ms":90,"colo":"LAX","egress":"v6"},
+  {"proxy":"203.0.113.41:99999","v4":true,"v6":false,"ms":100,"colo":"LAX","egress":"v4"}
+]

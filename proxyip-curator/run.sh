@@ -2,6 +2,9 @@
 # ponytail: one-shot curation cycle. retest -> fetch -> probe -> merge -> upload -> re-verify.
 set -euo pipefail
 
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 : "${GIST_TOKEN:?GIST_TOKEN required}"
 : "${GIST_ID:?GIST_ID required}"
 GIST_FILENAME="${GIST_FILENAME:-proxyip.json}"
@@ -11,6 +14,8 @@ MAX_KEEP="${MAX_KEEP:-200}"
 MAX_PROBE_CANDIDATES="${MAX_PROBE_CANDIDATES:-600}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-12}"
 PROBE_CONCURRENCY="${PROBE_CONCURRENCY:-20}"
+CHECKER_API="${CHECKER_API:-}"
+CHECKER_TIMEOUT="${CHECKER_TIMEOUT:-8}"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -21,19 +26,27 @@ log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >&2; }
 # stdin format: ip:port (one per line)
 # stdout tsv:   proxy \t success \t v4 \t v6 \t responseTime \t colo \t egress
 probe_one() {
-  local proxy=$1
-  # 拆 proxy 成 ip:port; IPv6 是 [::1]:443, 用 rev+cut 提最后一段做 port
-  local port ip
-  port="${proxy##*:}"
-  ip="${proxy%:*}"
-  # v4/v6 字面量判断: 含 [ 或多 : 视为 v6
-  local is_v6=false
-  if [[ "$ip" == \[* ]]; then
+  local proxy=$1 normalized_proxy
+  normalized_proxy=$(normalize_proxy_value "$proxy") || {
+    printf '%s\tfalse\t\t\t\t\t\n' "$proxy"
+    return
+  }
+  proxy=$normalized_proxy
+
+  local port ip is_v6=false
+  if [[ "$proxy" =~ ^\[([^]]+)\]:([0-9]+)$ ]]; then
+    ip=${BASH_REMATCH[1]}
+    port=${BASH_REMATCH[2]}
     is_v6=true
-    ip="${ip#[}"; ip="${ip%]}"
+  elif [[ "$proxy" =~ ^([^:]+):([0-9]+)$ ]]; then
+    ip=${BASH_REMATCH[1]}
+    port=${BASH_REMATCH[2]}
+  else
+    printf '%s\tfalse\t\t\t\t\t\n' "$proxy"
+    return
   fi
-  # curl --resolve: v6 IP 需要单独裸写 (无方括号)
-  local trace http_code wall_ms colo egress_ip egress_type
+
+  local trace http_code wall_ms colo egress_type=""
   trace=$(curl -k -sS --connect-timeout 5 --max-time "$PROBE_TIMEOUT" \
     -w '\nHTTP=%{http_code}\nWALL=%{time_total}\n' \
     --resolve "speed.cloudflare.com:${port}:${ip}" \
@@ -44,12 +57,26 @@ probe_one() {
   http_code=$(printf '%s' "$trace" | awk -F'=' '/^HTTP=/{print $2}')
   wall_ms=$(printf '%s' "$trace" | awk -F'=' '/^WALL=/{print int($2*1000)}')
   colo=$(printf '%s' "$trace" | awk -F'=' '/^colo=/{print $2}')
-  # ponytail: 从 trace body 里 ip= 拿 proxyIP 真实出口, 判 v4/v6 (双栈 VPS 默认走 v6, 影响下游选点)
-  egress_ip=$(printf '%s' "$trace" | awk -F'=' '/^ip=/{print $2}')
-  egress_type=v4
-  [[ "$egress_ip" == *:* ]] && egress_type=v6
+
+  # Direct --resolve reaches Cloudflare from the runner, not through the
+  # proxy backend.  Only an explicitly configured checker that documents a
+  # real proxy-chain egress_ip may populate egress.
+  if [ -n "$CHECKER_API" ]; then
+    local checker_query checker_url checker_response
+    checker_query=$(jq -rn --arg value "$proxy" '$value | @uri')
+    if [[ "$CHECKER_API" == *\?* ]]; then
+      checker_url="${CHECKER_API}&proxyip=${checker_query}"
+    else
+      checker_url="${CHECKER_API}?proxyip=${checker_query}"
+    fi
+    if checker_response=$(curl -fsS --connect-timeout 5 --max-time "$CHECKER_TIMEOUT" "$checker_url" 2>/dev/null); then
+      egress_type=$(classify_checker_egress "$checker_response")
+    fi
+  fi
+
   if [ "$http_code" = "200" ] && [ -n "$colo" ]; then
-    # ponytail: v4/v6 靠 IP 字面量判断, 单侧填 true; 探测方向单一, 另一侧填 false 简化
+    # v4/v6 describe the literal address used by this probe. egress is empty
+    # unless the trusted checker above returned an explicit address.
     if $is_v6; then
       printf '%s\ttrue\tfalse\ttrue\t%s\t%s\t%s\n' "$proxy" "$wall_ms" "$colo" "$egress_type"
     else
@@ -60,7 +87,7 @@ probe_one() {
   fi
 }
 export -f probe_one
-export PROBE_TIMEOUT
+export PROBE_TIMEOUT CHECKER_API CHECKER_TIMEOUT
 
 # ---------- probe list -> tsv ----------
 probe_list() {
@@ -98,11 +125,15 @@ upload() {
 #   - plain text: ip:port#TAG per line
 fetch_sources() {
   local out=$1
+  local normalized_out="${out}.normalized"
   : > "$out"
+  : > "$normalized_out"
+  local source_index=0
   IFS=',' read -ra urls <<< "$SOURCES"
   for u in "${urls[@]}"; do
     u=$(echo "$u" | tr -d ' ')
     [ -z "$u" ] && continue
+    source_index=$((source_index + 1))
     log "fetch: $u"
     local raw
     local target_url="$u"
@@ -134,56 +165,50 @@ fetch_sources() {
     fi
     log "fetched $(printf '%s' "$raw" | wc -c) bytes from ${via_host:-?}"
     # try json first
-    if echo "$raw" | jq -e . >/dev/null 2>&1; then
-      # common shapes: [{ip,port,tag}], [{proxyip}], {items:[...]}
-      echo "$raw" | jq -r '
-        (if type=="array" then . elif .items then .items elif .data then .data else [] end)
-        | .[]
-        | (if .proxyip then .proxyip
-           # ponytail: multi-port .port arrays: only first port used, siblings dropped.
-           elif .ip and (.port|type=="array") and (.port|length>0) then "\(.ip):\(.port[0])"
-           elif .ip and (.port != null) and ((.port|tostring) != "") then "\(.ip):\(.port)"
-           elif .ip then "\(.ip):443"
-           else empty end) as $addr
-        | ($addr | select(. != null and . != "")) as $addr
-        # ponytail: 输出 ip:port#COUNTRY#IATA, 大写规范化, 后续 map 拆两列
-        | ((.meta?.country? // .country // "") | ascii_upcase) as $country
-        | ((.meta?.colo?.iata? // .tag // .region // "") | ascii_upcase) as $iata
-        | "\($addr)#\($country)#\($iata)"
-      ' 2>/dev/null >> "$out" || true
+    if printf '%s' "$raw" | jq -e . >/dev/null 2>&1; then
+      local source_file="$WORK/source-${source_index}.json"
+      printf '%s' "$raw" > "$source_file"
+      normalize_json_candidates "$source_file" >> "$normalized_out"
     else
-      # ponytail: plain text 支持 ip:port, ip:port#tag, ip, ip#tag (无端口补 :443); 输出 ip:port 或 ip:port#tag#
-      echo "$raw" | awk -F'#' '
-        /^[0-9a-fA-F.:\[\]]+(:[0-9]+)?/ {
-          ip=$1
-          if (ip !~ /:[0-9]+$/) ip=ip":443"
-          if (NF>=2) print ip"#"$2"#"
-          else print ip
-        }
-      ' >> "$out" || true
+      local text_file="$WORK/source-${source_index}.txt"
+      printf '%s\n' "$raw" > "$text_file"
+      normalize_text_candidates "$text_file" >> "$normalized_out"
     fi
   done
-  # normalize + optional region filter (匹配 country 列, 大小写不敏感)
+
+  # Keep the normalized three-column map while applying the optional country
+  # filter. Empty country tags remain eligible, matching the old text-source
+  # behavior.
   if [ -n "$REGION_FILTER" ]; then
     local pat
     pat=$(echo "$REGION_FILTER" | tr ',' '|' | tr '[:lower:]' '[:upper:]')
-    # ponytail: 保留匹配 region 的行,或无 region 标记的行(plain text 源无国家不过滤)
-    awk -v pat="($pat)" '{ if ($0 !~ /#/) {print; next} c=$0; sub(/^[^#]*#/,"",c); split(c,f,"#"); if (toupper(f[1]) ~ pat) print }' "$out" > "${out}.f" || true
-    mv "${out}.f" "$out"
+    awk -F'\t' -v pat="($pat)" '{ if ($2 == "" || toupper($2) ~ pat) print }' "$normalized_out" > "${out}.f" || true
+    mv "${out}.f" "$normalized_out"
   fi
-  # strip #COUNTRY#IATA for probing; keep 3-col map alongside (proxy, country, iata)
-  awk -F'#' '{print $1"\t"$2"\t"$3}' "$out" | sort -u -k1,1 > "${out}.map"
+
+  sort -u -t $'\t' -k1,1 "$normalized_out" > "$out"
+  # Keep country and IATA beside the address; the probe input below uses only
+  # the first column.
+  cp "$out" "${out}.map"
   cut -f1 "${out}.map" > "$out"
-  # ponytail: 截断候选数避免 probe 超时(all.json 10725 全 probe 超 workflow 15min timeout)
-  if [ "$(wc -l < "$out")" -gt "$MAX_PROBE_CANDIDATES" ]; then
-    shuf -n "$MAX_PROBE_CANDIDATES" "$out" > "${out}.shuf" && mv "${out}.shuf" "$out"
-  fi
+
+  # Stratified cap: reserve one probe per IATA first, then fill the remaining
+  # budget using the old random strategy. If there are more IATAs than the
+  # cap, the cap is the unavoidable upper bound.
+  select_probe_candidates "$out" "${out}.map" "$MAX_PROBE_CANDIDATES" "$out"
   log "sources yielded $(wc -l < "$out") candidates"
 }
 
 # ---------- main flow ----------
 cur_json=$(fetch_current) || { log "ERROR: fetch_current failed, aborting"; exit 1; }
-log "current gist has $(echo "$cur_json" | jq 'length? // 0' 2>/dev/null || echo 0) entries"
+if ! printf '%s' "$cur_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+  log "ERROR: current gist content is not a JSON array, aborting"
+  exit 1
+fi
+current_before=$(printf '%s' "$cur_json" | jq 'length')
+cur_json=$(filter_gist_ipv4_json "$cur_json")
+current_after=$(printf '%s' "$cur_json" | jq 'length')
+log "current gist has ${current_after} valid IPv4 entries (filtered ${current_before} total)"
 
 # 1. Retest existing entries (verification step per user requirement)
 retest_tsv="$WORK/retest.tsv"
@@ -218,21 +243,20 @@ merged_json="$WORK/merged.json"
 new_map="${new_txt}.map"
 [ -f "$new_map" ] || : > "$new_map"
 
-# retest 分支: 保留原 gist 的 colo + egress (通过 existing.txt 索引)
+# retest 分支: 保留原 gist 的 colo；egress 必须由本轮可信 checker 重新提供
 retest_map="$WORK/retest.map"
 : > "$retest_map"
 if echo "$cur_json" | jq -e 'type=="array" and length>0' >/dev/null 2>&1; then
-  echo "$cur_json" | jq -r '.[] | "\(.proxy)\t\(.colo // "")\t\(.egress // "")"' > "$retest_map"
+  echo "$cur_json" | jq -r '.[] | "\(.proxy)\t\(.colo // "")"' > "$retest_map"
 fi
 
 {
-  # existing 存活: 保留原 gist colo/egress (通过 retest_map lookup, 无则用新探测 .[5]/.[6])
+  # existing 存活: 保留原 gist colo；egress 只接受本轮 trusted checker 的结果
   # 输出追加两列: final_colo (index 7), final_egress (index 8)
-  awk -F'\t' 'NR==FNR{colo[$1]=$2; egress[$1]=$3; next}
+  awk -F'\t' 'NR==FNR{colo[$1]=$2; next}
               $2=="true"{
                 c=(colo[$1]!=""?colo[$1]:$6);
-                e=(egress[$1]!=""?egress[$1]:$7);
-                print $0"\t"c"\t"e
+                print $0"\t"c"\t"$7
               }' \
     "$retest_map" "$retest_tsv"
   # new 存活: 用源 IATA 覆盖 checker colo; egress 用新探测值

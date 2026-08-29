@@ -19,10 +19,11 @@ ENV TZ=Asia/Shanghai \
     MAX_KEEP=200 \
     PROBE_TIMEOUT=12 \
     PROBE_CONCURRENCY=20 \
+    CHECKER_TIMEOUT=8 \
     RETEST_ONLY_ON_START=0
 
 WORKDIR /app
-COPY run.sh entrypoint.sh /app/
+COPY run.sh lib.sh entrypoint.sh /app/
 RUN chmod +x /app/run.sh /app/entrypoint.sh
 
 # Runtime env required:
@@ -31,6 +32,6 @@ RUN chmod +x /app/run.sh /app/entrypoint.sh
 #   GIST_FILENAME  — filename inside gist (default: proxyip.json)
 #   SOURCES        — comma-separated URLs of ip lists (txt/json)
 #   REGION_FILTER  — optional, e.g. JP,US,HK  (matches #TAG lines)
-#   CHECKER_API    — default https://api.090227.xyz/check
+#   CHECKER_API    — optional trusted checker returning success + egress_ip
 
 ENTRYPOINT ["/app/entrypoint.sh"]
