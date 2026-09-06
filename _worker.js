@@ -6705,9 +6705,10 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 				continue;
 			}
 
-			const [txtRecords, aRecords] = await Promise.all([
+			const [txtRecords, aRecords, aaaaRecords] = await Promise.all([
 				DoH查询(地址, 'TXT'),
-				DoH查询(地址, 'A')
+				DoH查询(地址, 'A'),
+				DoH查询(地址, 'AAAA')
 			]);
 
 			const txtData = txtRecords.filter(r => r.type === 16).map(r => (r.data));
@@ -6724,8 +6725,6 @@ async function 解析地址端口(proxyIP, 目标域名 = 'dash.cloudflare.com',
 				所有反代数组.push(...ipv4List.map(ip => [ip, 端口]));
 				continue;
 			}
-
-			const aaaaRecords = await DoH查询(地址, 'AAAA');
 			const ipv6List = aaaaRecords.filter(r => r.type === 28).map(r => `[${r.data}]`);
 			if (ipv6List.length > 0) {
 				log(`[反代解析] ${地址} 未获取到TXT和A记录，使用AAAA记录，共${ipv6List.length}个结果`);
