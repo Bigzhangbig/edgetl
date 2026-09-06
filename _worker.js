@@ -5435,10 +5435,14 @@ async function 请求日志记录(env, request, 访问IP, 请求类型 = "Get_SU
 		const 当前时间 = new Date();
 		const 日志内容 = { TYPE: 请求类型, IP: 访问IP, ASN: `AS${request.cf.asn || '0'} ${request.cf.asOrganization || 'Unknown'}`, CC: `${request.cf.country || 'N/A'} ${request.cf.city || 'N/A'}`, URL: request.url, UA: request.headers.get('User-Agent') || 'Unknown', TIME: 当前时间.getTime() };
 		if (config_JSON.TG.启用) {
+			let TG_JSON = null;
 			try {
 				const TG_TXT = await env.KV.get('tg.json');
-				const TG_JSON = JSON.parse(TG_TXT);
-				if (TG_JSON?.BotToken && TG_JSON?.ChatID) {
+				TG_JSON = JSON.parse(TG_TXT);
+			} catch (error) { console.error(`读取tg.json出错: ${error.message}`) }
+
+			if (TG_JSON?.BotToken && TG_JSON?.ChatID) {
+				try {
 					const 请求时间 = new Date(日志内容.TIME).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 					const 请求URL = new URL(日志内容.URL);
 					const msg = `<b>#${config_JSON.优选订阅生成.SUBNAME} 日志通知</b>\n\n` +
@@ -5459,8 +5463,8 @@ async function 请求日志记录(env, request, 访问IP, 请求类型 = "Get_SU
 							'User-Agent': 日志内容.UA || 'Unknown',
 						}
 					});
-				}
-			} catch (error) { console.error(`读取tg.json出错: ${error.message}`) }
+				} catch (error) { console.error(`发送TG通知出错: ${error.message}`) }
+			}
 		}
 		是否写入KV日志 = ['1', 'true'].includes(env.OFF_LOG) ? false : 是否写入KV日志;
 		if (!是否写入KV日志) return;
