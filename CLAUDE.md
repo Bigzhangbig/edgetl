@@ -1,80 +1,28 @@
-# CLAUDE.md
+# edgetunnel
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+单文件 Cloudflare Worker 代理服务，支持 VLESS、Trojan、Shadowsocks、管理面板与订阅生成。全部 Worker 逻辑在 `_worker.js`，无构建步骤或仓库内测试套件。
 
-## Project Overview
+## 按任务读取
 
-**edgetunnel** is a single-file Cloudflare Worker proxy service that implements VLESS, Trojan, and Shadowsocks protocols with an integrated admin panel and subscription generation. The entire application lives in `_worker.js` (~3500 lines).
+- **改协议解析或代理链**：读 `_worker.js` 的 `处理WS请求`、`处理gRPC请求`、`处理XHTTP请求`、`socks5Connect`、`httpConnect` 与 `反代参数获取`。首包解析手写字节偏移，修改时逐字段核对协议边界。
+- **改配置或订阅**：读 `读取config_JSON`，环境变量、KV 配置和运行时参数的合并顺序以该函数为准，不在本文件另维护完整变量表。
+- **改管理面板**：Worker 只提供后端；前端在运行时从 `Pages静态页面` 指向的 `https://edt-pages.github.io` 获取。
+- **改部署或同步**：同时检查 `wrangler.toml` 与 `.github/workflows/sync.yml`。fork 每日同步上游，需保留本 fork 与 `cmliu/edgetunnel` 的实际差异，不能用上游 README 替代本地部署事实。
 
-## Development Commands
+本仓当前行为按「`_worker.js` 与 `wrangler.toml` > 本仓实际部署回执 > fork 差异说明 > 上游 README > `docs/superpowers` 历史计划」判断。上游部署步骤不能直接套到本 fork；历史 plan 只用于追溯，不自动授权改协议、配置或同步行为。
 
-This project has **no build step, no test suite, and no package manager dependencies**. Development relies on the Wrangler CLI.
+## 常用命令
 
-- **Local dev server**: `npx wrangler dev` (or `bunx wrangler dev`)
-- **Deploy to Workers**: `npx wrangler deploy`
-- **Tail logs**: `npx wrangler tail`
+```bash
+bunx wrangler dev
+bunx wrangler deploy    # 实际部署；需要明确授权
+bunx wrangler tail
+```
 
-### Required Setup for Local Development
+本地管理功能需要 `ADMIN` secret 和 binding 为 `KV` 的命名空间。`UUID`、`PROXYIP` 等其他配置按 `读取config_JSON` 的当前契约设置。
 
-1. Install Wrangler CLI globally or use `npx`/`bunx`.
-2. Authenticate with Cloudflare: `npx wrangler login`
-3. Bind a KV namespace for local dev (create in Cloudflare dashboard, then add to `wrangler.toml`):
-   ```toml
-   [[kv_namespaces]]
-   binding = "KV"
-   id = "your-kv-namespace-id"
-   ```
-4. Set secrets via Wrangler:
-   - `npx wrangler secret put ADMIN` (admin panel password, **required**)
-   - `npx wrangler secret put UUID` (optional, forces fixed UUID)
-   - `npx wrangler secret put PROXYIP` (optional, custom proxy IP)
+## 修改边界
 
-## Architecture
-
-### Single-File Monolith
-
-All logic resides in `_worker.js`. The export default `fetch` handler is the single entry point. It routes requests based on pathname, headers (Upgrade, Content-Type), and query parameters:
-
-1. **Proxy protocols** (matched first by headers)
-   - `Upgrade: websocket` → `处理WS请求()` (VLESS/Trojan/SS over WebSocket)
-   - `content-type: application/grpc` → `处理gRPC请求()`
-   - POST with XHTTP padding signature → `处理XHTTP请求()`
-2. **Admin & subscriptions** (matched by pathname)
-   - `/admin` and `/admin/*` → cookie-authenticated admin panel & API
-   - `/sub` → subscription generation (Clash, Sing-box, Surge, mixed)
-   - `/login`, `/logout` → session management
-3. **Fallback** → camouflage page proxy (`env.URL`) or default nginx-like page
-
-### Key Subsystems
-
-- **Protocol handlers** (`处理WS请求`, `处理gRPC请求`, `处理XHTTP请求`): parse VLESS/Trojan/SS initial packets, establish outbound TCP/UDP connections via `connect` from `cloudflare:sockets`, and bridge traffic between the client and remote host.
-- **SOCKS5/HTTP proxy chaining** (`socks5Connect`, `httpConnect`, `反代参数获取`): optional upstream proxy support configured via environment variables or URL query parameters.
-- **Subscription generation**: dynamically builds node lists from local random IPs, external优选APIs, or优选订阅生成器 hosts, and outputs base64/VLESS links or converts via subconverter APIs.
-- **Config management** (`读取config_JSON`): merges environment variables with KV-stored `config.json`, `cf.json`, `tg.json`, and `ADD.txt` into a single configuration object used by the admin panel and subscription endpoints.
-- **Admin panel UI**: the frontend HTML/JS/CSS is **not** in this repo; it is fetched at runtime from `Pages静态页面` (`https://edt-pages.github.io`). The worker only serves the API backend for the panel.
-
-### State & Storage
-
-- **KV**: used for persisting `config.json`, `cf.json`, `tg.json`, `ADD.txt`, and `log.json`. The binding name must be `KV`.
-- **No local state**: the worker is stateless except for in-memory caches (e.g., `缓存反代IP`, `缓存反代解析数组`).
-
-## Environment Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `ADMIN` | **Required.** Admin panel login password. |
-| `KEY` | Subscription path key; defaults to a hardcoded string if unset. |
-| `UUID` | Optional. Forces a fixed UUIDv4 for node auth. |
-| `PROXYIP` | Optional. Global custom proxy IP (e.g., `proxyip.example.com:443`). |
-| `URL` | Optional. Camouflage page URL, or `1101` for a built-in error page. |
-| `GO2SOCKS5` | Optional. Comma-separated domains forced through SOCKS5 (use `*` for global). |
-| `DEBUG` | Optional. Set to `1` or `true` to enable `console.log` output. |
-| `OFF_LOG` | Optional. Set to `1` or `true` to disable KV log recording. |
-| `BEST_SUB` | Optional. Set to `1` or `true` to enable best-subscription generator mode. |
-
-## Important Notes for Editing
-
-- **No bundler or transpiler**: `_worker.js` is deployed as-is. It must be valid Cloudflare Worker JavaScript and can use `cloudflare:sockets` (imported at the top).
-- **Compatibility date**: `wrangler.toml` pins `compatibility_date = "2025-11-04"`.
-- **GitHub Action**: `.github/workflows/sync.yml` auto-syncs forks from upstream `cmliu/edgetunnel` daily.
-- When modifying protocol parsing logic (VLESS/Trojan/SS), be extremely careful with byte offsets and buffer boundaries; the initial packet parsers are hand-written and sensitive to protocol spec alignment.
+- `_worker.js` 直接部署，修改必须保持 Cloudflare Workers JavaScript 与 `cloudflare:sockets` 可用；不要引入需要 bundler 的依赖。
+- 兼容性日期以 `wrangler.toml` 为准。
+- 没有测试套件时，按改动范围报告实际验证过的协议、管理或订阅路径；Wrangler 能启动不等于代理链路已验证。
